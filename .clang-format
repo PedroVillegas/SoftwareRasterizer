@@ -1,0 +1,57 @@
+﻿---
+## Language
+Language: Cpp
+Standard: Latest
+
+ColumnLimit: 120
+UseTab: Never
+IndentWidth: 4
+DeriveLineEnding: false
+UseCRLF: false
+ReflowComments: false
+SortIncludes: Never
+# Align class visibility modifiers with the class keyword.
+AccessModifierOffset: -4
+
+# Add a 'namespace Foo' on closing brace automatically.
+FixNamespaceComments: true
+CompactNamespaces: false
+NamespaceIndentation: None
+
+SeparateDefinitionBlocks: Always
+KeepEmptyLinesAtTheStartOfBlocks: true
+
+AlignEscapedNewlines: Left
+AlignTrailingComments: true
+AllowShortFunctionsOnASingleLine: None
+AllowShortLambdasOnASingleLine: None
+AllowShortLoopsOnASingleLine: false
+
+# Put template declaration on its own line.
+AlwaysBreakTemplateDeclarations: Yes
+# Put template declaration for concept on its own line.
+BreakBeforeConceptDeclarations: Always
+
+# Put binary operators at the beginning of the line if expressions don't fit on a line.
+BreakBeforeBinaryOperators: NonAssignment
+# Horizontally align operands of binary and ternary expressions such as the operator is un-indented
+# so that the wrapped operand is aligned with the operand on the first line.
+AlignOperands: AlignAfterOperator
+
+# Put spaces inside brace initialisation syntax.
+Cpp11BracedListStyle: false
+
+# Put a space before brace initialisation syntax.
+SpaceBeforeCpp11BracedList: true
+
+BinPackArguments: false
+BinPackParameters: false
+
+BreakBeforeBraces: Allman
+DerivePointerAlignment: false
+
+PointerAlignment: Left
+SpaceAfterCStyleCast: true
+SpaceAfterLogicalNot: false
+SpaceAfterTemplateKeyword: true
+...

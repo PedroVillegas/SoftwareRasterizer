@@ -1,0 +1,6 @@
+#pragma once
+
+inline PFN_vkSetDebugUtilsObjectNameEXT vkSetDebugUtilsObjectNameEXT_Meta;
+inline PFN_vkCmdBeginDebugUtilsLabelEXT vkCmdBeginDebugUtilsLabelEXT_Meta;
+inline PFN_vkCmdEndDebugUtilsLabelEXT vkCmdEndDebugUtilsLabelEXT_Meta;
+inline PFN_vkCmdInsertDebugUtilsLabelEXT vkCmdInsertDebugUtilsLabelEXT_Meta;
