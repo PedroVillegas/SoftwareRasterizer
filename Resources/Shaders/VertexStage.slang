@@ -26,7 +26,7 @@ struct PC
 PC PushConst;
 
 [shader("compute")]
-[numthreads(16, 1, 1)]
+[numthreads(256, 1, 1)]
 void main(uint id : SV_DispatchThreadID)
 {
     if (id >= PushConst.vertexCount) return;

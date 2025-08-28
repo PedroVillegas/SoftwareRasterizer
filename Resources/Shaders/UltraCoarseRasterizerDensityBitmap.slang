@@ -1,0 +1,58 @@
+// This shader populates the Density Bitmaps found in the first
+// `densityBitmapBlockCount` uint32_t's at the beginning of each bin's
+// data block in `GSR::binningRasterBuffer`.
+//
+// Each block of the Density Bitmap is a uint32_t such that the nth bit
+// denotes whether the nth block of the bin's Primitive Bitmap has any
+// bits set. If the block is empty, then the bit is set to 0, and 1 otherwise.
+//
+// Each thread maps 32 contiguous Primitive Bitmap blocks to a single
+// Density Bitmap block.
+
+#include "Shared.slangi"
+
+struct PC
+{
+    uint* binningRasterizerBuffer;
+    GraphicsPipelineIntrinsicData* intrinsicDataBuffer;
+    uint triangleCount;
+    uint renderImgId;
+};
+
+[[vk::push_constant]]
+PC PushConst;
+
+groupshared uint[64] smemDensityBitmap;
+
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void main(uint3 globalThreadId : SV_DispatchThreadID,
+          uint3 workgroupId : SV_GroupID,
+          uint3 localThreadId : SV_GroupThreadID)
+{
+    if (localThreadId.x >= MAX_DENSITY_BITMAP_BLOCK_COUNT) return;
+
+    const uint binOffset = workgroupId.x;
+    const uint binDataWidth = MAX_DENSITY_BITMAP_BLOCK_COUNT + MAX_PRIMITIVE_BITMAP_BLOCK_COUNT;
+    const uint offsetToDensityBitmaps = binOffset * binDataWidth;
+    const uint offsetToPrimitiveBitmaps = offsetToDensityBitmaps + MAX_DENSITY_BITMAP_BLOCK_COUNT;
+
+    smemDensityBitmap[localThreadId.x] = 0;
+
+    GroupMemoryBarrierWithGroupSync();
+
+    const uint d = MAX_PRIMITIVE_BITMAP_BLOCK_COUNT >> 5;
+    for (uint i = 0; i < d; ++i)
+    {
+        const uint primitiveBitmapBlock = PushConst.binningRasterizerBuffer[offsetToPrimitiveBitmaps + (localThreadId.x * 32)];
+
+        if (primitiveBitmapBlock != 0)
+        {
+            smemDensityBitmap[localThreadId.x] |= 1 << (32 - d);
+        }
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    PushConst.binningRasterizerBuffer[offsetToDensityBitmaps + localThreadId.x] = smemDensityBitmap[localThreadId.x];
+}

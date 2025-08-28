@@ -1,0 +1,166 @@
+bool PointNotInRegionPixelSpace(int2 regionMin, int2 regionMax, int2 point)
+{
+    return any(point > regionMax) || any(point < regionMin);
+}
+
+bool PrimitiveFoundInRegion(Triangle primitive, Region2D region)
+{
+    // TODO: Fullscreen triangle tests fail ?!
+    // Any vertex in region
+    if (!PointNotInRegionPixelSpace(region.min, region.max, primitive.v0) ||
+        !PointNotInRegionPixelSpace(region.min, region.max, primitive.v1) ||
+        !PointNotInRegionPixelSpace(region.min, region.max, primitive.v2))
+    {
+        return true;
+    }
+
+    // Any corner of region inside triangle
+
+    int2 bottomLeft = region.min;
+    int firstEdgeTest = EdgeFn(primitive.v0, primitive.v1, bottomLeft);
+    int secondEdgeTest = EdgeFn(primitive.v1, primitive.v2, bottomLeft);
+    int thirdEdgeTest = EdgeFn(primitive.v2, primitive.v0, bottomLeft);
+
+    if ( (firstEdgeTest >= 0 && secondEdgeTest >= 0 && thirdEdgeTest >= 0) ||
+         (firstEdgeTest < 0 && secondEdgeTest < 0 && thirdEdgeTest < 0) )
+    {
+        return true;
+    }
+
+    int2 bottomRight = int2(region.max.x, region.min.y);
+    firstEdgeTest = EdgeFn(primitive.v0, primitive.v1, bottomRight);
+    secondEdgeTest = EdgeFn(primitive.v1, primitive.v2, bottomRight);
+    thirdEdgeTest = EdgeFn(primitive.v2, primitive.v0, bottomRight);
+
+    if ( (firstEdgeTest >= 0 && secondEdgeTest >= 0 && thirdEdgeTest >= 0) ||
+         (firstEdgeTest < 0 && secondEdgeTest < 0 && thirdEdgeTest < 0) )
+    {
+        return true;
+    }
+
+    int2 topRight = region.max;
+    firstEdgeTest = EdgeFn(primitive.v0, primitive.v1, topRight);
+    secondEdgeTest = EdgeFn(primitive.v1, primitive.v2, topRight);
+    thirdEdgeTest = EdgeFn(primitive.v2, primitive.v0, topRight);
+
+    if ( (firstEdgeTest >= 0 && secondEdgeTest >= 0 && thirdEdgeTest >= 0) ||
+         (firstEdgeTest < 0 && secondEdgeTest < 0 && thirdEdgeTest < 0) )
+    {
+        return true;
+    }
+
+    int2 topLeft = int2(region.min.x, region.max.y);
+    firstEdgeTest = EdgeFn(primitive.v0, primitive.v1, topLeft);
+    secondEdgeTest = EdgeFn(primitive.v1, primitive.v2, topLeft);
+    thirdEdgeTest = EdgeFn(primitive.v2, primitive.v0, topLeft);
+
+    if ( (firstEdgeTest >= 0 && secondEdgeTest >= 0 && thirdEdgeTest >= 0) ||
+         (firstEdgeTest < 0 && secondEdgeTest < 0 && thirdEdgeTest < 0) )
+    {
+        return true;
+    }
+
+    // Lines of triangle going ccw
+    Line LT0 = Line(primitive.v0, primitive.v1);
+    Line LT1 = Line(primitive.v1, primitive.v2);
+    Line LT2 = Line(primitive.v2, primitive.v0);
+
+    Line LR0 = Line(bottomLeft, bottomRight);
+    Line LR1 = Line(bottomRight, topRight);
+    Line LR2 = Line(topRight, topLeft);
+    Line LR3 = Line(topLeft, bottomLeft);
+
+    if (
+        LineIntersectsLine(LR0, LT0) ||
+        LineIntersectsLine(LR0, LT1) ||
+        LineIntersectsLine(LR0, LT2) ||
+
+        LineIntersectsLine(LR1, LT0) ||
+        LineIntersectsLine(LR1, LT1) ||
+        LineIntersectsLine(LR1, LT2) ||
+
+        LineIntersectsLine(LR2, LT0) ||
+        LineIntersectsLine(LR2, LT1) ||
+        LineIntersectsLine(LR2, LT2) ||
+
+        LineIntersectsLine(LR3, LT0) ||
+        LineIntersectsLine(LR3, LT1) ||
+        LineIntersectsLine(LR3, LT2)
+    ) {
+        return true;
+    }
+
+    return false;
+}
+
+int EdgeFn(int2 startVertex, int2 endVertex, int2 sample)
+{
+    int dx = endVertex.x - startVertex.x;
+    int dy = endVertex.y - startVertex.y;
+
+    return (sample.x - startVertex.x) * dy - (sample.y - startVertex.y) * dx;
+}
+
+// https://www.realtimerendering.com/resources/GraphicsGems/gemsii/xlines.c
+bool LineIntersectsLine(Line l1, Line l2)
+{
+    int a1, a2, b1, b2, c1, c2; /* Coefficients of line eqns. */
+    int r1, r2, r3, r4;         /* 'Sign' values */
+    int denom;                  /* Intermediate values */
+
+    /* Compute a1, b1, c1, where line joining points 1 and 2
+     * is "a1 x  +  b1 y  +  c1  =  0".
+     */
+
+    // x1/y1 = l1.start, x2/y2 = l1.end, x3/y3 = l2.start, x4/y4 = l2.end
+
+    a1 = l1.end.y - l1.start.y;
+    b1 = l1.start.x - l1.end.x;
+    c1 = l1.end.x * l1.start.y - l1.start.x * l1.end.y;
+
+    /* Compute r3 and r4.
+     */
+
+    r3 = a1 * l2.start.x + b1 * l2.start.y + c1;
+    r4 = a1 * l2.end.x + b1 * l2.end.y + c1;
+
+    /* Check signs of r3 and r4.  If both point 3 and point 4 lie on
+     * same side of line 1, the line segments do not intersect.
+     */
+
+    if ( r3 != 0 && r4 != 0 && SameSigns( r3, r4 ) )
+        return false;
+
+    /* Compute a2, b2, c2 */
+
+    a2 = l2.end.y - l2.start.y;
+    b2 = l2.start.x - l2.end.x;
+    c2 = l2.end.x * l2.start.y - l2.start.x * l2.end.y;
+
+    /* Compute r1 and r2 */
+
+    r1 = a2 * l1.start.x + b2 * l1.start.y + c2;
+    r2 = a2 * l1.end.x + b2 * l1.end.y + c2;
+
+    /* Check signs of r1 and r2.  If both point 1 and point 2 lie
+     * on same side of second line segment, the line segments do
+     * not intersect.
+     */
+
+    if ( r1 != 0 && r2 != 0 && SameSigns( r1, r2 ) )
+        return false;
+
+    /* Line segments intersect: compute intersection point.
+     */
+
+    denom = a1 * b2 - a2 * b1;
+    if ( denom == 0 )
+        return false; // COLLINEAR
+
+    return true;
+}
+
+bool SameSigns(int a, int b)
+{
+    return (a > 0 && b > 0) || (a < 0 && b < 0);
+}
