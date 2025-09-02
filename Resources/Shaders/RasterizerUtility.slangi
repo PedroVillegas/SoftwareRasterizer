@@ -5,7 +5,6 @@ bool PointNotInRegionPixelSpace(int2 regionMin, int2 regionMax, int2 point)
 
 bool PrimitiveFoundInRegion(Triangle primitive, Region2D region)
 {
-    // TODO: Fullscreen triangle tests fail ?!
     // Any vertex in region
     if (!PointNotInRegionPixelSpace(region.min, region.max, primitive.v0) ||
         !PointNotInRegionPixelSpace(region.min, region.max, primitive.v1) ||

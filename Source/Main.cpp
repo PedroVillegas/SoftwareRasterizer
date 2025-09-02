@@ -1,5 +1,6 @@
 #include <chrono>
 #include <format>
+#include <iostream>
 
 #include <GLFW/glfw3.h>
 #include <Grace/Grace.hpp>
@@ -52,11 +53,6 @@ struct Vertex
 };
 
 static glm::mat4 HandleCamera(GLFWwindow* pWindow, Camera& camera, float dt, float speed, float sens);
-
-static void PrepareGraphicsPipeline(uint32_t vertexCount,
-                                    uint32_t& previousVertexCount,
-                                    Grace::BufferHandle& intrinsicVarsBuf,
-                                    Grace::Device* pDevice);
 
 int main()
 {
@@ -134,6 +130,12 @@ int main()
     Grace::Context gpuContext({ .deviceConfig = deviceDesc });
     Grace::Device* pDevice = gpuContext.GetDevicePtr();
 
+    VkPhysicalDeviceProperties2 pdp;
+    pdp.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    pdp.pNext = nullptr;
+    vkGetPhysicalDeviceProperties2(pDevice->GetPhysicalDevice(), &pdp);
+    //std::cout << "maxVertexInputAttributes: " << pdp.properties.limits.maxVertexInputAttributes;
+
     // Must first create the swapchain with desired extents
     pDevice->CreateSwapchain({ windowWidth, windowHeight }, vsync);
 
@@ -163,11 +165,28 @@ int main()
         .data = nullptr,
     });
 
-    Grace::BufferHandle graphicsPipelineInstrinsicVariablesBuffer = pDevice->CreateBuffer({
+    const Grace::BufferHandle metaDataBuffer = pDevice->CreateBuffer({
+        .name = "GSR::metaDataBuffer",
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+               | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .allocFlags = 0,
+        .size = sizeof(uint32_t),
+        .data = nullptr,
+    });
+
+    const Grace::BufferHandle graphicsPipelineInstrinsicVariablesBuffer = pDevice->CreateBuffer({
         .name = "GSR::graphicsPipelineInstrinsicVariablesBuffer",
         .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         .allocFlags = 0,
-        .size = 1,
+        .size = 12'500'000 * sizeof(GraphicsPipelineIntrinsicData), // 250MB
+        .data = nullptr,
+    });
+
+    const Grace::BufferHandle compactedInstrinsicDataBuffer = pDevice->CreateBuffer({
+        .name = "GSR::compactedInstrinsicDataBuffer",
+        .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        .allocFlags = 0,
+        .size = 12'500'000 * sizeof(GraphicsPipelineIntrinsicData), // 250MB
         .data = nullptr,
     });
 
@@ -228,55 +247,61 @@ int main()
     const Grace::PipelineHandle fineRasterizerPipeline = pDevice->CreatePipeline(pbuilder.pipelineDesc);
 
     pbuilder.ClearShaders();
-    pbuilder.AddShader("PrimitivePreparation.slang.spv", VK_SHADER_STAGE_COMPUTE_BIT);
-    pbuilder.BuildComputePipeline("GSR::primitivePrepPipeline", pDevice->GetSolePipelineLayout());
-    const Grace::PipelineHandle primitivePrepPipeline = pDevice->CreatePipeline(pbuilder.pipelineDesc);
+    pbuilder.AddShader("PrimitiveAssembly.slang.spv", VK_SHADER_STAGE_COMPUTE_BIT);
+    pbuilder.BuildComputePipeline("GSR::primitiveAsmPipeline", pDevice->GetSolePipelineLayout());
+    const Grace::PipelineHandle primitiveAsmPipeline = pDevice->CreatePipeline(pbuilder.pipelineDesc);
+
+    pbuilder.ClearShaders();
+    pbuilder.AddShader("StreamCompactorNonOrderPreserving.slang.spv", VK_SHADER_STAGE_COMPUTE_BIT);
+    pbuilder.BuildComputePipeline("GSR::streamCompactorNonOrderPreserving", pDevice->GetSolePipelineLayout());
+    const Grace::PipelineHandle streamCompactorNonOrderPreservingPipeline =
+        pDevice->CreatePipeline(pbuilder.pipelineDesc);
 
     // Cube
     // clang-format off
     const std::array vertices = {
-        Vertex(glm::vec3(-0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 0.0F)),
-        Vertex(glm::vec3( 0.5F, -0.5F, -0.5F),  glm::vec2(1.0F, 0.0F)),
-        Vertex(glm::vec3( 0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
-        Vertex(glm::vec3( 0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
-        Vertex(glm::vec3(-0.5F,  0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
-        Vertex(glm::vec3(-0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 0.0F)),
-        /*
+        // Front face
         Vertex(glm::vec3(-0.5F, -0.5F,  0.5F),  glm::vec2(0.0F, 0.0F)),
         Vertex(glm::vec3( 0.5F, -0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
         Vertex(glm::vec3( 0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 1.0F)),
         Vertex(glm::vec3( 0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 1.0F)),
         Vertex(glm::vec3(-0.5F,  0.5F,  0.5F),  glm::vec2(0.0F, 1.0F)),
         Vertex(glm::vec3(-0.5F, -0.5F,  0.5F),  glm::vec2(0.0F, 0.0F)),
-
-        Vertex(glm::vec3(-0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
+        // Rear face
+        Vertex(glm::vec3(-0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 0.0F)),
+        Vertex(glm::vec3( 0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
+        Vertex(glm::vec3( 0.5F, -0.5F, -0.5F),  glm::vec2(1.0F, 0.0F)),
+        Vertex(glm::vec3(-0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 0.0F)),
+        Vertex(glm::vec3(-0.5F,  0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
+        Vertex(glm::vec3( 0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
+        // Left face
+        Vertex(glm::vec3(-0.5F, -0.5F,  0.5F),  glm::vec2(0.0F, 0.0F)),
         Vertex(glm::vec3(-0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
-        Vertex(glm::vec3(-0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
         Vertex(glm::vec3(-0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
         Vertex(glm::vec3(-0.5F, -0.5F,  0.5F),  glm::vec2(0.0F, 0.0F)),
         Vertex(glm::vec3(-0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
-
+        Vertex(glm::vec3(-0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
+        // Right face
+        Vertex(glm::vec3(0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
         Vertex(glm::vec3(0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
-        Vertex(glm::vec3(0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
-        Vertex(glm::vec3(0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
-        Vertex(glm::vec3(0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
         Vertex(glm::vec3(0.5F, -0.5F,  0.5F),  glm::vec2(0.0F, 0.0F)),
+        Vertex(glm::vec3(0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
+        Vertex(glm::vec3(0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
         Vertex(glm::vec3(0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
-
+        // Bottom face
         Vertex(glm::vec3(-0.5F, -0.5F, -0.5F), glm::vec2(0.0F, 1.0F)),
         Vertex(glm::vec3( 0.5F, -0.5F, -0.5F), glm::vec2(1.0F, 1.0F)),
         Vertex(glm::vec3( 0.5F, -0.5F,  0.5F), glm::vec2(1.0F, 0.0F)),
         Vertex(glm::vec3( 0.5F, -0.5F,  0.5F), glm::vec2(1.0F, 0.0F)),
         Vertex(glm::vec3(-0.5F, -0.5F,  0.5F), glm::vec2(0.0F, 0.0F)),
         Vertex(glm::vec3(-0.5F, -0.5F, -0.5F), glm::vec2(0.0F, 1.0F)),
-
+        // Top face
+        Vertex(glm::vec3( 0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
         Vertex(glm::vec3(-0.5F,  0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
-        Vertex(glm::vec3( 0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
-        Vertex(glm::vec3( 0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
-        Vertex(glm::vec3( 0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
         Vertex(glm::vec3(-0.5F,  0.5F,  0.5F),  glm::vec2(0.0F, 0.0F)),
-        Vertex(glm::vec3(-0.5F,  0.5F, -0.5F),  glm::vec2(0.0F, 1.0F))
-        */
+        Vertex(glm::vec3( 0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
+        Vertex(glm::vec3( 0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
+        Vertex(glm::vec3(-0.5F,  0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
     };
     // clang-format on
 
@@ -363,14 +388,17 @@ int main()
         cmd.InsertDebugLabel("Render/Depth Images");
         cmd.Dispatch(glm::ceil(windowWidth / 16.0F), glm::ceil(windowHeight / 16.0F));
 
+        cmd.FillBuffer(metaDataBuffer, 0);
+
+        cmd.AddMemoryBarrier({ Grace::AccessType::ClearWrite },
+                             { Grace::AccessType::ComputeShaderStorageRead, Grace::AccessType::ClearWrite });
+        cmd.PipelineBarrier();
+
         cmd.EndDebugLabel();
 
         // Vertex Shader Stage
         cmd.BeginDebugLabel("Vertex Shader Stage");
         cmd.BindPipeline(vertexStagePipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
-
-        PrepareGraphicsPipeline(
-            vertices.size(), previousVertexCount, graphicsPipelineInstrinsicVariablesBuffer, pDevice);
 
         {
             struct PC
@@ -399,20 +427,34 @@ int main()
         {
             uint64_t binningRasterizerCounterBuffer;
             uint64_t intrinsicDataBuffer;
+            uint64_t compactedIntrinsicDataBuffer;
+            uint64_t metaDataBuffer;
             uint32_t triangleCount;
+            uint32_t verticesCount;
             uint32_t renderImgId;
         } pc;
 
         pc.binningRasterizerCounterBuffer = pDevice->GetBuffer(rasterizerBinsBuffer).GetBDA();
         pc.intrinsicDataBuffer = pDevice->GetBuffer(graphicsPipelineInstrinsicVariablesBuffer).GetBDA();
+        pc.compactedIntrinsicDataBuffer = pDevice->GetBuffer(compactedInstrinsicDataBuffer).GetBDA();
+        pc.metaDataBuffer = pDevice->GetBuffer(metaDataBuffer).GetBDA();
         pc.triangleCount = vertices.size() / 3;
+        pc.verticesCount = vertices.size();
         pc.renderImgId = pDevice->GetImage(renderImg).GetStorageImgId();
         cmd.PushConstants(pDevice->GetSolePipelineLayout(), sizeof(pc), &pc);
 
-        cmd.BeginDebugLabel("Primitive Preparation Stage");
-        cmd.BindPipeline(primitivePrepPipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
+        cmd.BeginDebugLabel("Primitive Assembly Stage");
+        cmd.BindPipeline(primitiveAsmPipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
         cmd.Dispatch(glm::floor(vertices.size() / 256.0F) + 1);
+        cmd.EndDebugLabel();
 
+        cmd.AddMemoryBarrier({ Grace::AccessType::ComputeShaderWrite },
+                             { Grace::AccessType::ComputeShaderStorageRead });
+        cmd.PipelineBarrier();
+
+        cmd.BeginDebugLabel("Stream Compaction Stage");
+        cmd.BindPipeline(streamCompactorNonOrderPreservingPipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
+        cmd.Dispatch(1);
         cmd.EndDebugLabel();
 
         cmd.AddMemoryBarrier({ Grace::AccessType::ComputeShaderWrite },
@@ -420,7 +462,6 @@ int main()
         cmd.PipelineBarrier();
 
         cmd.BeginDebugLabel("Binning Rasterizer Stage");
-
         cmd.InsertDebugLabel("Fill Primitive Bitmap");
         cmd.BindPipeline(ultraCoarseRasterizerPipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
         cmd.Dispatch(longLifetimeGlobalVars.ultraCoarseRasterDispatchSize.x,
@@ -588,31 +629,6 @@ int main()
 
     glfwTerminate();
     return 0;
-}
-
-void PrepareGraphicsPipeline(uint32_t vertexCount,
-                             uint32_t& previousVertexCount,
-                             Grace::BufferHandle& intrinsicVarsBuf,
-                             Grace::Device* pDevice)
-{
-    uint32_t maxTrianglesEmittedByClipper = 4096;
-    if (vertexCount > previousVertexCount)
-    {
-        if (!pDevice->GetBuffer(intrinsicVarsBuf).IsNull())
-        {
-            pDevice->FreeBuffer(intrinsicVarsBuf, true);
-        }
-
-        intrinsicVarsBuf = pDevice->CreateBuffer({
-            .name = "GSR::graphicsPipelineInstrinsicVariablesBuffer",
-            .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            .allocFlags = 0,
-            .size = (vertexCount + (maxTrianglesEmittedByClipper * 3)) * sizeof(GraphicsPipelineIntrinsicData),
-            .data = nullptr,
-        });
-
-        previousVertexCount = vertexCount;
-    }
 }
 
 glm::mat4 HandleCamera(GLFWwindow* pWindow, Camera& camera, float dt, float speed, float sens)

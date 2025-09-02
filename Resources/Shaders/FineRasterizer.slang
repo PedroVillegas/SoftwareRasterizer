@@ -1,15 +1,7 @@
 #include "Shared.slangi"
 
-struct PC
-{
-    uint* binningRasterizerBuffer;
-    GraphicsPipelineIntrinsicData* intrinsicDataBuffer;
-    uint triangleCount;
-    uint renderImgId;
-};
-
 [[vk::push_constant]]
-PC PushConst;
+GraphicsPipelinePushConstants PushConst;
 
 groupshared uint[MAX_DENSITY_BITMAP_BLOCK_COUNT] smemDensityBitmapBlocks;
 
@@ -64,9 +56,9 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
                     if ((primBitmap & pbbBit) == 0) continue;
 
                     const uint triangleBeginIndex = 3 * ((densityBitmapBlockBit << 5) + primitiveBitmapBlockBit);
-                    int2 vtxPosRasterSpace_0 = PushConst.intrinsicDataBuffer[triangleBeginIndex].position.xy;
-                    int2 vtxPosRasterSpace_1 = PushConst.intrinsicDataBuffer[triangleBeginIndex + 1].position.xy;
-                    int2 vtxPosRasterSpace_2 = PushConst.intrinsicDataBuffer[triangleBeginIndex + 2].position.xy;
+                    int2 vtxPosRasterSpace_0 = PushConst.compactedIntrinsicDataBuffer[triangleBeginIndex].position.xy;
+                    int2 vtxPosRasterSpace_1 = PushConst.compactedIntrinsicDataBuffer[triangleBeginIndex + 1].position.xy;
+                    int2 vtxPosRasterSpace_2 = PushConst.compactedIntrinsicDataBuffer[triangleBeginIndex + 2].position.xy;
 
                     int2 sampleRasterSpace = globalThreadId.xy - halfFramebuffer;
                     int firstEdgeTest = EdgeFn(vtxPosRasterSpace_0, vtxPosRasterSpace_1, sampleRasterSpace);
@@ -79,10 +71,11 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
                     // renderTexture[uint2(11, 10)] = float4(1.0);
                     // renderTexture[uint2(11)] = float4(1.0);
 
-                    if ( (firstEdgeTest >= 0 && secondEdgeTest >= 0 && thirdEdgeTest >= 0) ||
-                         (firstEdgeTest < 0 && secondEdgeTest < 0 && thirdEdgeTest < 0) )
+                    if ( (firstEdgeTest >= 0 && secondEdgeTest >= 0 && thirdEdgeTest >= 0)
+                      || (firstEdgeTest < 0 && secondEdgeTest < 0 && thirdEdgeTest < 0)
+                    )
                     {
-                        renderTexture[globalThreadId.xy] = float4(FillPixel(triangleBeginIndex), 1.0);
+                        renderTexture[globalThreadId.xy] = float4(FillPixel(PushConst.compactedIntrinsicDataBuffer[triangleBeginIndex].position.w), 1.0);
                     }
                 }
             }
@@ -107,11 +100,11 @@ int EdgeFn(int2 startVertex, int2 endVertex, int2 sample)
 
 uint hash(uint a)
 {
-    a = (a+0x7ed55d16) + (a<<12);
-    a = (a^uint(0xc761c23c)) ^ (a>>19);
-    a = (a+0x165667b1) + (a<<5);
+    a = (a+0x7edf5d16) + (a<<12);
+    a = (a^uint(0xc161c23c)) ^ (a>>19);
+    a = (a+0x1c2667b1) + (a<<5);
     a = (a+0xd3a2646c) ^ (a<<9);
     a = (a+0xfd7046c5) + (a<<3);
-    a = (a^uint(0xb55a4f09)) ^ (a>>16);
+    a = (a^uint(0xb55a4f01)) ^ (a>>16);
     return a;
 }

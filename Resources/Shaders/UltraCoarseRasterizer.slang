@@ -9,16 +9,8 @@
 #include "Shared.slangi"
 #include "RasterizerUtility.slangi"
 
-struct PC
-{
-    uint* binningRasterizerBuffer;
-    GraphicsPipelineIntrinsicData* intrinsicDataBuffer;
-    uint triangleCount;
-    uint renderImgId;
-};
-
 [[vk::push_constant]]
-PC PushConst;
+GraphicsPipelinePushConstants PushConst;
 
 groupshared uint smemPerBinPrimitiveCounter;
 groupshared uint smemTrianglesProcessed;
@@ -30,7 +22,8 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
           uint3 workgroupId : SV_GroupID,
           uint3 localThreadId : SV_GroupThreadID)
 {
-    const uint intrinsicDataBufferSize = PushConst.triangleCount * 3;
+    const uint intrinsicDataBufferSize = PushConst.metaDataBuffer[0];
+    uint triangleCount = intrinsicDataBufferSize / 3;
     smemPerBinPrimitiveCounter = 0;
     smemTrianglesProcessed = 0;
 
@@ -45,7 +38,7 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
     int2 ma = min(mi + int2(uLongLifeGlobals.ultraCoarseRasterTileSize), halfFramebuffer);
     Region2D region = Region2D(mi, ma);
 
-    while (smemTrianglesProcessed < PushConst.triangleCount)
+    while (smemTrianglesProcessed < triangleCount)
     {
         // TODO: Would this work?? Probably faster because triangles will be processed at the same time since no atomics
 
@@ -61,12 +54,9 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
         if (triangleBeginOffset + 2 >= intrinsicDataBufferSize) break;
 
         // Fetch triangle
-        int2 vtxPosRasterSpace_0 = PushConst.intrinsicDataBuffer[triangleBeginOffset].position.xy;
-
-        if (all(vtxPosRasterSpace_0 == int2(CULLED_VERTEX))) continue;
-
-        int2 vtxPosRasterSpace_1 = PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position.xy;
-        int2 vtxPosRasterSpace_2 = PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position.xy;
+        int2 vtxPosRasterSpace_0 = PushConst.compactedIntrinsicDataBuffer[triangleBeginOffset].position.xy;
+        int2 vtxPosRasterSpace_1 = PushConst.compactedIntrinsicDataBuffer[triangleBeginOffset + 1].position.xy;
+        int2 vtxPosRasterSpace_2 = PushConst.compactedIntrinsicDataBuffer[triangleBeginOffset + 2].position.xy;
 
         Triangle triangle = Triangle(vtxPosRasterSpace_0, vtxPosRasterSpace_1, vtxPosRasterSpace_2);
 

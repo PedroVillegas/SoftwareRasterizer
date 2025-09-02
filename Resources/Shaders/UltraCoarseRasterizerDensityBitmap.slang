@@ -11,16 +11,8 @@
 
 #include "Shared.slangi"
 
-struct PC
-{
-    uint* binningRasterizerBuffer;
-    GraphicsPipelineIntrinsicData* intrinsicDataBuffer;
-    uint triangleCount;
-    uint renderImgId;
-};
-
 [[vk::push_constant]]
-PC PushConst;
+GraphicsPipelinePushConstants PushConst;
 
 groupshared uint[64] smemDensityBitmap;
 
@@ -33,8 +25,7 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
     if (localThreadId.x >= MAX_DENSITY_BITMAP_BLOCK_COUNT) return;
 
     const uint binOffset = workgroupId.x;
-    const uint binDataWidth = MAX_DENSITY_BITMAP_BLOCK_COUNT + MAX_PRIMITIVE_BITMAP_BLOCK_COUNT;
-    const uint offsetToDensityBitmaps = binOffset * binDataWidth;
+    const uint offsetToDensityBitmaps = binOffset * BIN_DATA_STRIDE;
     const uint offsetToPrimitiveBitmaps = offsetToDensityBitmaps + MAX_DENSITY_BITMAP_BLOCK_COUNT;
 
     smemDensityBitmap[localThreadId.x] = 0;

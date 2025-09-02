@@ -7,6 +7,17 @@
 [[vk::binding(STORAGE_IMAGE_BINDING, 0)]]
 __DynamicResource uStorageTextures[];
 
+struct GraphicsPipelinePushConstants
+{
+    uint* binningRasterizerBuffer;
+    GraphicsPipelineIntrinsicData* intrinsicDataBuffer;
+    GraphicsPipelineIntrinsicData* compactedIntrinsicDataBuffer;
+    uint* metaDataBuffer;
+    uint triangleCount;
+    uint verticesCount;
+    uint renderImgId;
+};
+
 struct LongLifetimeGlobalVars
 {
     uint2 framebufferSize;
