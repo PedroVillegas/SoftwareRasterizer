@@ -24,6 +24,15 @@ struct LongLifetimeGlobalVars
     glm::uvec2 ultraCoarseRasterDispatchSize;
     glm::uvec2 coarseRasterDispatchSize;
     glm::uvec2 fineRasterDispatchSize;
+
+    uint32_t clipperEmittedVerticesOffset;
+};
+
+struct GraphicsPipelineMetaData
+{
+    uint32_t compactedIntrinsicDataBufferSize;
+    uint32_t clipperEmittedVerticesCount;
+    uint32_t validClipperEmittedTrianglesCount;
 };
 
 struct GraphicsPipelineIntrinsicData
@@ -64,7 +73,7 @@ int main()
 
     // Options
     const float cameraSpeed = 6.0F;
-    const float cameraSensitivity = 60.0F;
+    const float cameraSensitivity = 30.0F;
     bool vsync = false;
     bool framebufferHasResized = false;
     uint32_t windowWidth = 800;
@@ -98,6 +107,7 @@ int main()
                                       glm::floor(static_cast<float>(windowHeight) / 64) + 1 },
         .fineRasterDispatchSize = { glm::floor(static_cast<float>(windowWidth) / 16) + 1,
                                     glm::floor(static_cast<float>(windowHeight) / 16) + 1 },
+        .clipperEmittedVerticesOffset = 12'500'000 - 4096,
     };
 
     glfwInit();
@@ -170,23 +180,25 @@ int main()
         .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
                | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         .allocFlags = 0,
-        .size = sizeof(uint32_t),
+        .size = sizeof(GraphicsPipelineMetaData),
         .data = nullptr,
     });
 
     const Grace::BufferHandle graphicsPipelineInstrinsicVariablesBuffer = pDevice->CreateBuffer({
         .name = "GSR::graphicsPipelineInstrinsicVariablesBuffer",
-        .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+               | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         .allocFlags = 0,
-        .size = 12'500'000 * sizeof(GraphicsPipelineIntrinsicData), // 250MB
+        .size = 12'500'000 * sizeof(GraphicsPipelineIntrinsicData), // 200MB
         .data = nullptr,
     });
 
     const Grace::BufferHandle compactedInstrinsicDataBuffer = pDevice->CreateBuffer({
         .name = "GSR::compactedInstrinsicDataBuffer",
-        .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+               | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         .allocFlags = 0,
-        .size = 12'500'000 * sizeof(GraphicsPipelineIntrinsicData), // 250MB
+        .size = 12'500'000 * sizeof(GraphicsPipelineIntrinsicData), // 200MB
         .data = nullptr,
     });
 
@@ -253,9 +265,19 @@ int main()
 
     pbuilder.ClearShaders();
     pbuilder.AddShader("StreamCompactorNonOrderPreserving.slang.spv", VK_SHADER_STAGE_COMPUTE_BIT);
-    pbuilder.BuildComputePipeline("GSR::streamCompactorNonOrderPreserving", pDevice->GetSolePipelineLayout());
+    pbuilder.BuildComputePipeline("GSR::streamCompactorNonOrderPreservingPipeline", pDevice->GetSolePipelineLayout());
     const Grace::PipelineHandle streamCompactorNonOrderPreservingPipeline =
         pDevice->CreatePipeline(pbuilder.pipelineDesc);
+
+    pbuilder.ClearShaders();
+    pbuilder.AddShader("MoveClipperEmittedPrimitives.slang.spv", VK_SHADER_STAGE_COMPUTE_BIT);
+    pbuilder.BuildComputePipeline("GSR::moveClipperEmittedPrimitivesPipeline", pDevice->GetSolePipelineLayout());
+    const Grace::PipelineHandle moveClipperEmittedPrimitivesPipeline = pDevice->CreatePipeline(pbuilder.pipelineDesc);
+
+    pbuilder.ClearShaders();
+    pbuilder.AddShader("StreamCompactionRound2.slang.spv", VK_SHADER_STAGE_COMPUTE_BIT);
+    pbuilder.BuildComputePipeline("GSR::streamCompactionRound2", pDevice->GetSolePipelineLayout());
+    const Grace::PipelineHandle streamCompactionRound2Pipeline = pDevice->CreatePipeline(pbuilder.pipelineDesc);
 
     // Cube
     // clang-format off
@@ -316,7 +338,8 @@ int main()
 
     // MVP
     Camera cam = {};
-    cam.position.z = 3.0F;
+    cam.position = { 0.0F, 0.0F, 3.0F };
+    cam.rotation = { 0.0413219668F, 31.9204712F, 0.0F };
 
     glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -6.0f));
     glm::mat4 view = glm::mat4(1.0f);
@@ -389,6 +412,8 @@ int main()
         cmd.Dispatch(glm::ceil(windowWidth / 16.0F), glm::ceil(windowHeight / 16.0F));
 
         cmd.FillBuffer(metaDataBuffer, 0);
+        //cmd.FillBuffer(compactedInstrinsicDataBuffer, 0);
+        cmd.FillBuffer(graphicsPipelineInstrinsicVariablesBuffer, 0);
 
         cmd.AddMemoryBarrier({ Grace::AccessType::ClearWrite },
                              { Grace::AccessType::ComputeShaderStorageRead, Grace::AccessType::ClearWrite });
@@ -452,8 +477,28 @@ int main()
                              { Grace::AccessType::ComputeShaderStorageRead });
         cmd.PipelineBarrier();
 
+        // TODO: Make this an indirect dispatch (valid vertices / (1024 * 1024))
         cmd.BeginDebugLabel("Stream Compaction Stage");
         cmd.BindPipeline(streamCompactorNonOrderPreservingPipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
+        cmd.Dispatch(1);
+        cmd.EndDebugLabel();
+
+        cmd.AddMemoryBarrier({ Grace::AccessType::ComputeShaderWrite },
+                             { Grace::AccessType::ComputeShaderStorageRead });
+        cmd.PipelineBarrier();
+
+        // TODO: This should also be an indirect dispatch
+        cmd.BeginDebugLabel("Copy Clipper Emitted Primitives");
+        cmd.BindPipeline(moveClipperEmittedPrimitivesPipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
+        // cmd.Dispatch(1);
+        cmd.EndDebugLabel();
+
+        cmd.AddMemoryBarrier({ Grace::AccessType::ComputeShaderWrite },
+                             { Grace::AccessType::ComputeShaderStorageRead });
+        cmd.PipelineBarrier();
+
+        cmd.BeginDebugLabel("Stream Compaction Stage");
+        cmd.BindPipeline(streamCompactionRound2Pipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
         cmd.Dispatch(1);
         cmd.EndDebugLabel();
 
@@ -599,6 +644,7 @@ int main()
                                                                 glm::floor(static_cast<float>(windowHeight) / 64) + 1 };
             longLifetimeGlobalVars.fineRasterDispatchSize = { glm::floor(static_cast<float>(windowWidth) / 16) + 1,
                                                               glm::floor(static_cast<float>(windowHeight) / 16) + 1 };
+            longLifetimeGlobalVars.clipperEmittedVerticesOffset = 12'500'000 - 4096,
 
             pDevice->FreeBuffer(longLifetimeGlobalVarsBuffer);
             longLifetimeGlobalVarsBuffer = pDevice->CreateBuffer({

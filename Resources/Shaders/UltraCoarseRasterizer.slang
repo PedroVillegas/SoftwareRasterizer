@@ -22,7 +22,7 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
           uint3 workgroupId : SV_GroupID,
           uint3 localThreadId : SV_GroupThreadID)
 {
-    const uint intrinsicDataBufferSize = PushConst.metaDataBuffer[0];
+    const uint intrinsicDataBufferSize = PushConst.metaDataBuffer[0].compactedIntrinsicDataBufferSize;//  + PushConst.metaDataBuffer[0].validClipperEmittedTrianglesCount;
     uint triangleCount = intrinsicDataBufferSize / 3;
     smemPerBinPrimitiveCounter = 0;
     smemTrianglesProcessed = 0;

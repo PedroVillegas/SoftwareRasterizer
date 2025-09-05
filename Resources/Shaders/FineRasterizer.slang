@@ -85,7 +85,7 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
 
 float3 FillPixel(uint id)
 {
-    //return float3(1.0);
+    // return float3(1.0);
     uint hashed = hash(id);
     return float3(float(hashed & 255U), float((hashed >> 8) & 255U), float((hashed >> 16) & 255U)) / 255.0;
 }

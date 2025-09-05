@@ -7,12 +7,24 @@
 [[vk::binding(STORAGE_IMAGE_BINDING, 0)]]
 __DynamicResource uStorageTextures[];
 
+struct GraphicsPipelineIntrinsicData
+{
+    float4 position;
+};
+
+struct GraphicsPipelineMetaData
+{
+    uint compactedIntrinsicDataBufferSize;
+    uint clipperEmittedVerticesCount;
+    uint validClipperEmittedTrianglesCount;
+};
+
 struct GraphicsPipelinePushConstants
 {
     uint* binningRasterizerBuffer;
     GraphicsPipelineIntrinsicData* intrinsicDataBuffer;
     GraphicsPipelineIntrinsicData* compactedIntrinsicDataBuffer;
-    uint* metaDataBuffer;
+    GraphicsPipelineMetaData* metaDataBuffer;
     uint triangleCount;
     uint verticesCount;
     uint renderImgId;
@@ -27,6 +39,8 @@ struct LongLifetimeGlobalVars
     uint2 ultraCoarseRasterDispatchSize;
     uint2 coarseRasterDispatchSize;
     uint2 fineRasterDispatchSize;
+
+    uint clipperEmittedVerticesOffset;
 };
 
 [[vk::binding(UNIFORM_BUFFER_BINDING, 0)]]
@@ -39,11 +53,6 @@ static const uint MAX_DENSITY_BITMAP_BLOCK_COUNT = 32;//MAX_PRIMITIVE_BITMAP_BLO
 static const uint BIN_DATA_STRIDE = MAX_DENSITY_BITMAP_BLOCK_COUNT + MAX_PRIMITIVE_BITMAP_BLOCK_COUNT;
 
 static const int CULLED_VERTEX = 0x7FFFFFFF; // Max int32_t
-
-struct GraphicsPipelineIntrinsicData
-{
-    float4 position;
-};
 
 struct Vertex
 {

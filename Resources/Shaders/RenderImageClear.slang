@@ -28,7 +28,7 @@ void main(uint2 id : SV_DispatchThreadID)
     float3 c = float3(uv, 0.5);
 
     //renderTexture[id] = float4(pow(c, float3(1.0 / 2.2)), 1.0);
-    renderTexture[id] = float4(0.0, 0.0, 0.0, 1.0);
+    renderTexture[id] = float4(1.0, 1.0, 1.0, 1.0);
 
     RWTexture2D<float> depthTexture = uStorageTextures[PushConst.depthImgId];
     depthTexture[id] = 1.0;

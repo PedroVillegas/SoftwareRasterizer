@@ -15,7 +15,7 @@ groupshared uint smemInterWaveOffset;
 [numthreads(1024, 1, 1)]
 void main(uint2 id : SV_DispatchThreadID)
 {
-    uint N = PushConst.verticesCount;
+    uint N = PushConst.metaDataBuffer[0].clipperEmittedVerticesCount;
     if (id.x >= (max(N, 1024) >> 10) << 6) return;
 
     // if (id.x == 0) printf("# Active Threads = %u", (max(N, 1024) >> 10) << 6);
@@ -30,6 +30,8 @@ void main(uint2 id : SV_DispatchThreadID)
     uint2 predmask = uint2(0);
     uint2 counts = uint2(0);
     uint count = 0;
+    uint clipperEmittedPrimitivesOffset = uLongLifeGlobals.clipperEmittedVerticesOffset;
+
     // Stage 1 - count and predicateMask for each block
     for (uint i = 0; i < 16; i++)
     {
@@ -39,7 +41,7 @@ void main(uint2 id : SV_DispatchThreadID)
         uint index = blockOffset + (i << 6) + laneId;
         if (index < N)
         {
-            el = PushConst.intrinsicDataBuffer[index].position.x;
+            el = PushConst.intrinsicDataBuffer[clipperEmittedPrimitivesOffset + index].position.x;
         }
 
         // Predicate mask
@@ -84,6 +86,11 @@ void main(uint2 id : SV_DispatchThreadID)
     // if (laneId == 0 && warpId == 1)
     //     printf("thread: %u, count: %u\n", id.x, interWaveOffset);
 
+    uint dstBufferOffset = 0;
+    if (laneId == 15) InterlockedAdd(PushConst.metaDataBuffer[0].compactedIntrinsicDataBufferSize, interWaveOffset + count, dstBufferOffset);
+    dstBufferOffset = WaveReadLaneAt(dstBufferOffset, 15);
+    // if (laneId == 15) printf("orig: %u, count: %u\n", dstBufferOffset, count);
+
     for (uint i = 0; i < 16; i++)
     {
         uint intraBlockOffset = 0;
@@ -99,7 +106,7 @@ void main(uint2 id : SV_DispatchThreadID)
             if ((mask.x & predtest) > 0)
             {
                 intraBlockOffset = countbits(mask.x & (predtest - 1));
-                PushConst.compactedIntrinsicDataBuffer[interWaveOffset + interBlockOffset + intraBlockOffset] = PushConst.intrinsicDataBuffer[index];
+                PushConst.compactedIntrinsicDataBuffer[dstBufferOffset + interWaveOffset + interBlockOffset + intraBlockOffset] = PushConst.intrinsicDataBuffer[clipperEmittedPrimitivesOffset + index];
             }
         }
         else
@@ -108,10 +115,8 @@ void main(uint2 id : SV_DispatchThreadID)
             if ((mask.y & predtest) > 0)
             {
                 intraBlockOffset = counts64.x + countbits(mask.y & (predtest - 1));
-                PushConst.compactedIntrinsicDataBuffer[interWaveOffset + interBlockOffset + intraBlockOffset] = PushConst.intrinsicDataBuffer[index];
+                PushConst.compactedIntrinsicDataBuffer[dstBufferOffset + interWaveOffset + interBlockOffset + intraBlockOffset] = PushConst.intrinsicDataBuffer[clipperEmittedPrimitivesOffset + index];
             }
         }
     }
-
-    if (laneId == 15) InterlockedAdd(PushConst.metaDataBuffer[0].compactedIntrinsicDataBufferSize, interWaveOffset + count);
 }

@@ -6,6 +6,9 @@
 [[vk::push_constant]]
 GraphicsPipelinePushConstants PushConst;
 
+#define BACKFACE_CULLING 1
+
+static const float NEAR_PLANE = 0.1;
 static const Region2D GUARDBAND_CLIP_REGION_RASTER_SPACE = Region2D(-(1 << 14), 1 << 14);
 // static const Region2D GUARDBAND_CLIP_REGION = Region2D(int2(-200, -100), int2(200, 100));
 
@@ -24,67 +27,145 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
     float4 vtxPosClipSpace_1 = PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position;
     float4 vtxPosClipSpace_2 = PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position;
 
-    Triangle processed = ProcessPrimitive(vtxPosClipSpace_0, vtxPosClipSpace_1, vtxPosClipSpace_2);
+    // Viewport Culling before clipping
+    if (
+        (vtxPosClipSpace_0.x < -vtxPosClipSpace_0.w &&
+         vtxPosClipSpace_1.x < -vtxPosClipSpace_1.w &&
+         vtxPosClipSpace_2.x < -vtxPosClipSpace_2.w) ||
 
-    // PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(vtxPosRasterSpace_0, 0.0, 0.0);
-    // PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(vtxPosRasterSpace_1, 0.0, 0.0);
-    // PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(vtxPosRasterSpace_2, 0.0, 0.0);
+        (vtxPosClipSpace_0.x > vtxPosClipSpace_0.w &&
+         vtxPosClipSpace_1.x > vtxPosClipSpace_1.w &&
+         vtxPosClipSpace_2.x > vtxPosClipSpace_2.w) ||
 
-    PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(processed.v0, 0.0, triangleBeginOffset);
-    PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(processed.v1, 0.0, 0.0);
-    PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(processed.v2, 0.0, 0.0);
+        (vtxPosClipSpace_0.y < -vtxPosClipSpace_0.w &&
+         vtxPosClipSpace_1.y < -vtxPosClipSpace_1.w &&
+         vtxPosClipSpace_2.y < -vtxPosClipSpace_2.w) ||
 
-    // GroupMemoryBarrierWithGroupSync();
+        (vtxPosClipSpace_0.y > vtxPosClipSpace_0.w &&
+         vtxPosClipSpace_1.y > vtxPosClipSpace_1.w &&
+         vtxPosClipSpace_2.y > vtxPosClipSpace_2.w) ||
 
-    // w component of first will contain the total triangle count (triangle count + clipper emitted triangles)
-    // Atomic into shared mem + atomic add into here??
-    // if (globalThreadId.x == 0)
+        (vtxPosClipSpace_0.z < NEAR_PLANE &&
+         vtxPosClipSpace_1.z < NEAR_PLANE &&
+         vtxPosClipSpace_2.z < NEAR_PLANE) ||
+
+        (vtxPosClipSpace_0.z > vtxPosClipSpace_0.w &&
+         vtxPosClipSpace_1.z > vtxPosClipSpace_1.w &&
+         vtxPosClipSpace_2.z > vtxPosClipSpace_2.w)
+    )
+    {
+        // printf("TRIVIAL REJECT\n");
+        PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(float2(CULLED_VERTEX), 0.0, triangleBeginOffset);
+        PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
+        PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
+        return;
+    }
+
+    // Completely inside clipping volume
+    if (
+        (vtxPosClipSpace_0.x >= -vtxPosClipSpace_0.w &&
+         vtxPosClipSpace_1.x >= -vtxPosClipSpace_1.w &&
+         vtxPosClipSpace_2.x >= -vtxPosClipSpace_2.w) &&
+
+        (vtxPosClipSpace_0.x <= vtxPosClipSpace_0.w &&
+         vtxPosClipSpace_1.x <= vtxPosClipSpace_1.w &&
+         vtxPosClipSpace_2.x <= vtxPosClipSpace_2.w) &&
+
+        (vtxPosClipSpace_0.y >= -vtxPosClipSpace_0.w &&
+         vtxPosClipSpace_1.y >= -vtxPosClipSpace_1.w &&
+         vtxPosClipSpace_2.y >= -vtxPosClipSpace_2.w) &&
+
+        (vtxPosClipSpace_0.y <= vtxPosClipSpace_0.w &&
+         vtxPosClipSpace_1.y <= vtxPosClipSpace_1.w &&
+         vtxPosClipSpace_2.y <= vtxPosClipSpace_2.w) &&
+
+        (vtxPosClipSpace_0.z >= NEAR_PLANE &&
+         vtxPosClipSpace_1.z >= NEAR_PLANE &&
+         vtxPosClipSpace_2.z >= NEAR_PLANE) &&
+
+        (vtxPosClipSpace_0.z <= vtxPosClipSpace_0.w &&
+         vtxPosClipSpace_1.z <= vtxPosClipSpace_1.w &&
+         vtxPosClipSpace_2.z <= vtxPosClipSpace_2.w)
+    )
+    {
+        // printf("TRIVIAL ACCEPT\n");
+        Triangle processed = ProcessPrimitive(vtxPosClipSpace_0, vtxPosClipSpace_1, vtxPosClipSpace_2);
+
+        // PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(vtxPosRasterSpace_0, 0.0, 0.0);
+        // PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(vtxPosRasterSpace_1, 0.0, 0.0);
+        // PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(vtxPosRasterSpace_2, 0.0, 0.0);
+
+        PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(processed.v0, 0.0, triangleBeginOffset);
+        PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(processed.v1, 0.0, 0.0);
+        PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(processed.v2, 0.0, 0.0);
+        return;
+    }
+
+    // Clip before homogeneous divide!
+    Polygon clipped = SutherlandHodgman(
+        Triangle3D(
+            vtxPosClipSpace_0,
+            vtxPosClipSpace_1,
+            vtxPosClipSpace_2,
+        )
+    );
+
+    // if (globalThreadId.x == 0) printf("clipped\n");
+
+    PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(float2(CULLED_VERTEX), 0.0, triangleBeginOffset);
+    PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
+    PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
+
+    // printf("\nNew Clipped Poly, vertex count = %i\n", clipped.vertexCount);
+    // for (uint i = 0; i < clipped.vertexCount; i++)
     // {
-    //     PushConst.intrinsicDataBuffer[0].position.w = PushConst.triangleCount;
+    //     printf("%f, %f, %f, %f\n", clipped.vertices[i].x, clipped.vertices[i].y, clipped.vertices[i].z, clipped.vertices[i].w);
     // }
+
+    uint orig;
+    InterlockedAdd(PushConst.metaDataBuffer[0].clipperEmittedVerticesCount, 3 * (clipped.vertexCount - 2), orig);
+
+    // printf("[START]\n");
+
+    if (clipped.vertexCount < 3) printf("VERTEX COUNT LESS THAN 3\n");
+
+    for (uint i = 0; i < clipped.vertexCount - 2; i++)
+    {
+        // printf("\n[Thread-%u] Pre-processed\n%f, %f, %f, %f\n%f, %f, %f, %f\n%f, %f, %f, %f\n", globalThreadId.x,
+        //         clipped.vertices[0].x, clipped.vertices[0].y, clipped.vertices[0].z, clipped.vertices[0].w,
+        //         clipped.vertices[i+1].x, clipped.vertices[i+1].y, clipped.vertices[i+1].z, clipped.vertices[i+1].w,
+        //         clipped.vertices[i+2].x, clipped.vertices[i+2].y, clipped.vertices[i+2].z, clipped.vertices[i+2].w);
+
+        Triangle processed = ProcessPrimitive(clipped.vertices[0], clipped.vertices[i + 1], clipped.vertices[i + 2]);
+
+        uint offset = uLongLifeGlobals.clipperEmittedVerticesOffset + orig + (i * 3);
+        PushConst.intrinsicDataBuffer[offset].position = float4(processed.v0, 0.0, triangleBeginOffset + i);
+        PushConst.intrinsicDataBuffer[offset + 1].position = float4(processed.v1, 0.0, 0.0);
+        PushConst.intrinsicDataBuffer[offset + 2].position = float4(processed.v2, 0.0, 0.0);
+
+        // printf("\n[Thread-%u] Processed\n%i, %i\n%i, %i\n%i, %i\n", globalThreadId.x,
+        //         processed.v0.x, processed.v0.y,
+        //         processed.v1.x, processed.v1.y,
+        //         processed.v2.x, processed.v1.y);
+    }
+
+    // printf("[END]\n");
 }
 
 Triangle ProcessPrimitive(float4 vtxPosClipSpace_0, float4 vtxPosClipSpace_1, float4 vtxPosClipSpace_2)
 {
-    // Perspective divide (normalising projected view volume to canonical view / normalised device coordinates)
+    // Homogeneous divide (normalising projected view volume to canonical view / normalised device coordinates)
     // Canonical view volume / NDC: -1 <= X <= 1, -1 <= Y <= 1, 0 <= Z <= 1
     float4 vtxPosNdcSpace_0 = vtxPosClipSpace_0 / vtxPosClipSpace_0.w;
     float4 vtxPosNdcSpace_1 = vtxPosClipSpace_1 / vtxPosClipSpace_1.w;
     float4 vtxPosNdcSpace_2 = vtxPosClipSpace_2 / vtxPosClipSpace_2.w;
 
-    // Backface cull AFTER perspective divide
-    float3 normal = cross((vtxPosNdcSpace_1 - vtxPosNdcSpace_0).xyz, (vtxPosNdcSpace_2 - vtxPosNdcSpace_0).xyz);
-    if (normal.z >= 0)
-    {
-        return Triangle(
-            int2(CULLED_VERTEX),
-            int2(CULLED_VERTEX),
-            int2(CULLED_VERTEX)
-        );
-    }
+    // printf("\nPost divide\n%f, %f, %f, %f\n%f, %f, %f, %f\n%f, %f, %f, %f\n",
+    //         vtxPosNdcSpace_0.x, vtxPosNdcSpace_0.y, vtxPosNdcSpace_0.z, vtxPosNdcSpace_0.w,
+    //         vtxPosNdcSpace_1.x, vtxPosNdcSpace_1.y, vtxPosNdcSpace_1.z, vtxPosNdcSpace_1.w,
+    //         vtxPosNdcSpace_2.x, vtxPosNdcSpace_2.y, vtxPosNdcSpace_2.z, vtxPosNdcSpace_2.w);
 
     int2 halfFramebuffer = int2(uLongLifeGlobals.framebufferSize * float2(0.5));
-    float2 guardBandRegionMinNdcSpace = float2(GUARDBAND_CLIP_REGION_RASTER_SPACE.min) / float2(halfFramebuffer);
-    float2 guardBandRegionMaxNdcSpace = float2(GUARDBAND_CLIP_REGION_RASTER_SPACE.max) / float2(halfFramebuffer);
-
-    // Clip against outer Guard-band perimeter
-
-    if ( VertexNotInRegion(vtxPosNdcSpace_0.xy, guardBandRegionMinNdcSpace, guardBandRegionMaxNdcSpace) ||
-         VertexNotInRegion(vtxPosNdcSpace_0.xy, guardBandRegionMinNdcSpace, guardBandRegionMaxNdcSpace) ||
-         VertexNotInRegion(vtxPosNdcSpace_0.xy, guardBandRegionMinNdcSpace, guardBandRegionMaxNdcSpace) )
-    {
-        Triangle3D t = Triangle3D(vtxPosNdcSpace_0.xyz, vtxPosNdcSpace_1.xyz, vtxPosNdcSpace_2.xyz);
-        Polygon clipped = SutherlandHodgman(t);
-    }
-
-    // for (uint32_t i = 0; i < emittedTriangles.size(); i++)
-    // {
-    //     emittedTriangles[i] = {
-    //         .a = clipped[0],
-    //         .b = clipped[i + 1],
-    //         .c = clipped[i + 2],
-    //     };
-    // }
 
     // Debug:
     // PushConst.intrinsicDataBuffer[triangleBeginOffset].position = vtxPosNdcSpace_0;
@@ -97,29 +178,35 @@ Triangle ProcessPrimitive(float4 vtxPosClipSpace_0, float4 vtxPosClipSpace_1, fl
 
     Triangle triangle = Triangle(vtxPosRasterSpace_0, vtxPosRasterSpace_1, vtxPosRasterSpace_2);
 
-    // TODO: Perform clipping in clip space BEFORE perspective divide and AFTER viewport culling.
-    //       Will have to perform a buffer compaction after
-    // Viewport culling
-    Region2D framebufferRasterSpace = Region2D(-halfFramebuffer, uLongLifeGlobals.framebufferSize - halfFramebuffer);
-    if (!PrimitiveFoundInRegion(triangle, framebufferRasterSpace) || triangle.SignedArea() == 0)
+    // Cull triangles with no area
+    int area = triangle.SignedArea();
+    if (area == 0)
     {
-        // vtxPosRasterSpace_0 = int2(CULLED_VERTEX);
-        // vtxPosRasterSpace_1 = int2(CULLED_VERTEX);
-        // vtxPosRasterSpace_2 = int2(CULLED_VERTEX);
-
         return Triangle(
             int2(CULLED_VERTEX),
             int2(CULLED_VERTEX),
-            int2(CULLED_VERTEX)
+            int2(CULLED_VERTEX),
         );
-    };
+    }
+
+    // Backface culling after homogenous divide is significantly simpler
+#if BACKFACE_CULLING
+    if (area > 0)
+    {
+        return Triangle(
+            int2(CULLED_VERTEX),
+            int2(CULLED_VERTEX),
+            int2(CULLED_VERTEX),
+        );
+    }
+#endif
 
     return triangle;
 }
 
 struct Triangle3D
 {
-    float3 a, b, c;
+    float4 a, b, c;
 };
 
 struct Plane
@@ -143,12 +230,13 @@ struct Plane
 
 struct Polygon
 {
-    float3 vertices[7];
+    float4 vertices[7];
     int vertexCount;
 
     [mutating]
-    void AddVertex(float3 v)
+    void AddVertex(float4 v)
     {
+        // if (vertexCount >= 7) printf("Polygon vertex count out of bounds!");
         vertices[vertexCount] = v;
         vertexCount++;
     }
@@ -157,13 +245,13 @@ struct Polygon
     {
         Polygon p = Polygon();
         p.vertexCount = 0;
-        p.vertices[0] = float3(0);
-        p.vertices[1] = float3(0);
-        p.vertices[2] = float3(0);
-        p.vertices[3] = float3(0);
-        p.vertices[4] = float3(0);
-        p.vertices[5] = float3(0);
-        p.vertices[6] = float3(0);
+        p.vertices[0] = float4(0);
+        p.vertices[1] = float4(0);
+        p.vertices[2] = float4(0);
+        p.vertices[3] = float4(0);
+        p.vertices[4] = float4(0);
+        p.vertices[5] = float4(0);
+        p.vertices[6] = float4(0);
         return p;
     }
 };
@@ -180,42 +268,40 @@ static Polygon SutherlandHodgman(Triangle3D triangle)
     p.AddVertex(triangle.b);
     p.AddVertex(triangle.c);
 
-    Plane planes[4] = {
-        Plane(float3(-1.0, 0.0, 0.0), 1.0), // Left
-        Plane(float3(1.0, 0.0, 0.0), 1.0),  // Right
-        Plane(float3(0.0, 1.0, 0.0), 1.0),  // Top
-        Plane(float3(0.0, -1.0, 0.0), 1.0), // Bottom
+    const uint PLANE_COUNT = 5;
+    float4 planeNormals[PLANE_COUNT] = {
+        float4(0.0, 0.0, 1.0, 0.0),  // Near
+        float4(-1.0, 0.0, 0.0, 1.0), // Left
+        float4(1.0, 0.0, 0.0, 1.0),  // Right
+        float4(0.0, 1.0, 0.0, 1.0),  // Top
+        float4(0.0, -1.0, 0.0, 1.0), // Bottom
     };
 
-    for (uint32_t d = 0; d < 4; ++d)
+    for (uint d = 0; d < PLANE_COUNT; d++)
     {
         Polygon clipped = Polygon::MakeNew();
-        for (uint32_t i = 0; i < p.vertexCount; i++)
+        for (uint i = 0; i < p.vertexCount; i++)
         {
-            // Clip against x = 1 plane;
             int next = (i + 1) % p.vertexCount;
-            D1 = planes[d].DistanceToPoint(p.vertices[i]);
-            D2 = planes[d].DistanceToPoint(p.vertices[next]);
-            if ((D1 <= 0) && (D2 <= 0))
+            D1 = dot(planeNormals[d], p.vertices[i]);
+            D2 = dot(planeNormals[d], p.vertices[next]);
+
+            if ((D1 >= 0) && (D2 >= 0))
             {
-                clipped.AddVertex(p.vertices[next]);
-            }
-            else if ((D1 > 0) && ((D2 > -EPSILON) && (D2 < EPSILON)))
-            {
-                clipped.AddVertex(p.vertices[next]);
-            }
-            else if (((D1 > -EPSILON) && (D1 < EPSILON)) && (D2 > 0))
-            {
-                continue;
+                clipped.AddVertex(p.vertices[i]);
             }
             else if ((D1 <= 0) && (D2 > 0))
             {
-                clipped.AddVertex(planes[d].IntersectionWithLine(p.vertices[i], p.vertices[next]));
+                float a = D1 / (D1 - D2);
+                float4 intersection = float4(1.0 - a) * p.vertices[i] + a * p.vertices[next];
+                clipped.AddVertex(intersection);
             }
             else if ((D1 > 0) && (D2 <= 0))
             {
-                clipped.AddVertex(planes[d].IntersectionWithLine(p.vertices[i], p.vertices[next]));
-                clipped.AddVertex(p.vertices[next]);
+                float a = D1 / (D1 - D2);
+                float4 intersection = float4(1.0 - a) * p.vertices[i] + a * p.vertices[next];
+                clipped.AddVertex(p.vertices[i]);
+                clipped.AddVertex(intersection);
             }
         }
         p = clipped;
