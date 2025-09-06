@@ -85,9 +85,22 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
 
 float3 FillPixel(uint id)
 {
-    // return float3(1.0);
     uint hashed = hash(id);
-    return float3(float(hashed & 255U), float((hashed >> 8) & 255U), float((hashed >> 16) & 255U)) / 255.0;
+    float3 o = float3(float(hashed & 255U), float((hashed >> 8) & 255U), float((hashed >> 16) & 255U)) / 255.0;
+    // o.x = o.x * 0.4 + 0.6;
+    // o.y = o.y * 0.1 + 0.05;
+    // o.z = o.z * 0.05 + 0.04;
+
+    // Vary lightness [0.0, 1.0] and chroma [0.0, 0.4]
+    o.x = o.x * 0.4 + 0.58;
+    o.y = o.y * 0.08 + 0.1;
+    // Keep hue constant [0.0, 360.0)
+    o.z = 10.0;
+
+    float3 c = OklabToSrgb(OklchToOklab(o));
+    return pow(c, float3(1.0 / 2.2));
+    return c;
+    // return float3(float(hashed & 255U), float((hashed >> 8) & 255U), float((hashed >> 16) & 255U)) / 255.0;
 }
 
 int EdgeFn(int2 startVertex, int2 endVertex, int2 sample)
@@ -100,11 +113,43 @@ int EdgeFn(int2 startVertex, int2 endVertex, int2 sample)
 
 uint hash(uint a)
 {
-    a = (a+0x7edf5d16) + (a<<12);
-    a = (a^uint(0xc161c23c)) ^ (a>>19);
-    a = (a+0x1c2667b1) + (a<<5);
+    a = (a+0x7ed55d16) + (a<<12);
+    a = (a^uint(0xc761c23c)) ^ (a>>19);
+    a = (a+0x165667b1) + (a<<5);
     a = (a+0xd3a2646c) ^ (a<<9);
     a = (a+0xfd7046c5) + (a<<3);
-    a = (a^uint(0xb55a4f01)) ^ (a>>16);
+    a = (a^uint(0xb55a4f09)) ^ (a>>16);
     return a;
 }
+
+float3 OklabToSrgb(float3 c)
+{
+    c.x = saturate(c.x);         // L
+    c.y = clamp(c.y, -0.5, 0.5); // a
+    c.z = clamp(c.z, -0.5, 0.5); // b
+
+    float l_ = c.x + 0.3963377774f * c.y + 0.2158037573f * c.z;
+    float m_ = c.x - 0.1055613458f * c.y - 0.0638541728f * c.z;
+    float s_ = c.x - 0.0894841775f * c.y - 1.2914855480f * c.z;
+
+    float l = l_ * l_ * l_;
+    float m = m_ * m_ * m_;
+    float s = s_ * s_ * s_;
+
+    return float3(
+        +4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s,
+        -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s,
+        -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s,
+    );
+}
+
+float3 OklchToOklab(float3 c)
+{
+    const float hRad = radians(c.z); // convert hue from degrees to radians
+    return float3(
+        c.x,
+        c.y * cos(hRad),
+        c.y * sin(hRad)
+    );
+}
+

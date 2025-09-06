@@ -8,7 +8,7 @@ GraphicsPipelinePushConstants PushConst;
 
 #define BACKFACE_CULLING 1
 
-static const float NEAR_PLANE = 0.1;
+static const float NEAR_PLANE = 0.01;
 static const Region2D GUARDBAND_CLIP_REGION_RASTER_SPACE = Region2D(-(1 << 14), 1 << 14);
 // static const Region2D GUARDBAND_CLIP_REGION = Region2D(int2(-200, -100), int2(200, 100));
 
@@ -116,18 +116,16 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
     PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
     PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
 
-    // printf("\nNew Clipped Poly, vertex count = %i\n", clipped.vertexCount);
-    // for (uint i = 0; i < clipped.vertexCount; i++)
-    // {
-    //     printf("%f, %f, %f, %f\n", clipped.vertices[i].x, clipped.vertices[i].y, clipped.vertices[i].z, clipped.vertices[i].w);
-    // }
+    if (clipped.vertexCount < 3)
+    {
+        // printf("VERTEX COUNT = %i\n", clipped.vertexCount);
+        return;
+    }
 
     uint orig;
     InterlockedAdd(PushConst.metaDataBuffer[0].clipperEmittedVerticesCount, 3 * (clipped.vertexCount - 2), orig);
 
     // printf("[START]\n");
-
-    if (clipped.vertexCount < 3) printf("VERTEX COUNT LESS THAN 3\n");
 
     for (uint i = 0; i < clipped.vertexCount - 2; i++)
     {
@@ -267,6 +265,11 @@ static Polygon SutherlandHodgman(Triangle3D triangle)
     p.AddVertex(triangle.a);
     p.AddVertex(triangle.b);
     p.AddVertex(triangle.c);
+
+    // printf("\nOriginal\n%f, %f, %f, %f\n%f, %f, %f, %f\n%f, %f, %f, %f\n",
+    //         triangle.a.x, triangle.a.y, triangle.a.z, triangle.a.w,
+    //         triangle.b.x, triangle.b.y, triangle.b.z, triangle.b.w,
+    //         triangle.c.x, triangle.c.y, triangle.c.z, triangle.c.w);
 
     const uint PLANE_COUNT = 5;
     float4 planeNormals[PLANE_COUNT] = {

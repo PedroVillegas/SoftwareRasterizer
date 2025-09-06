@@ -53,6 +53,9 @@ struct Camera
 {
     glm::vec3 position = { 0.0F, 0.0F, 0.0F };
     glm::vec3 rotation = { 0.0F, 0.0F, 0.0F };
+    glm::vec2 lastMousePosition = { 0.0F, 0.0F };
+    bool locked = true;
+    bool firstMouse = true;
 };
 
 struct Vertex
@@ -73,7 +76,7 @@ int main()
 
     // Options
     const float cameraSpeed = 6.0F;
-    const float cameraSensitivity = 30.0F;
+    const float cameraSensitivity = 10.0F;
     bool vsync = false;
     bool framebufferHasResized = false;
     uint32_t windowWidth = 800;
@@ -338,8 +341,9 @@ int main()
 
     // MVP
     Camera cam = {};
-    cam.position = { 0.0F, 0.0F, 3.0F };
-    cam.rotation = { 0.0413219668F, 31.9204712F, 0.0F };
+    cam.position = { 1.5F, 1.5F, -3.0F };
+    cam.rotation = { -25.0F, 25.0F, 0.0F };
+    // cam.rotation = { 0.0F, 0.0F, 0.0F };
 
     glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -6.0f));
     glm::mat4 view = glm::mat4(1.0f);
@@ -679,26 +683,48 @@ int main()
 
 glm::mat4 HandleCamera(GLFWwindow* pWindow, Camera& camera, float dt, float speed, float sens)
 {
-    glm::vec3 rot = glm::vec3(0.0F);
-    if (glfwGetKey(pWindow, GLFW_KEY_UP) == GLFW_PRESS)
+    if (glfwGetKey(pWindow, GLFW_KEY_ESCAPE) == GLFW_PRESS)
     {
-        rot.x += 1.0F;
+        glfwSetInputMode(pWindow, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        camera.locked = true;
     }
-    if (glfwGetKey(pWindow, GLFW_KEY_DOWN) == GLFW_PRESS)
+
+    if (glfwGetKey(pWindow, GLFW_KEY_F) == GLFW_PRESS)
     {
-        rot.x -= 1.0F;
+        glfwSetInputMode(pWindow, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        camera.locked = false;
+        camera.firstMouse = true;
     }
-    if (glfwGetKey(pWindow, GLFW_KEY_LEFT) == GLFW_PRESS)
+
+    if (camera.locked)
     {
-        rot.y += 1.0F;
+        glm::quat pitchRotation = glm::angleAxis(glm::radians(camera.rotation.x), glm::vec3 { 1.0F, 0.0F, 0.0F });
+        glm::quat yawRotation = glm::angleAxis(glm::radians(camera.rotation.y), glm::vec3 { 0.0F, 1.0F, 0.0F });
+
+        glm::mat4 R = glm::toMat4(yawRotation) * glm::toMat4(pitchRotation);
+        glm::mat4 T = glm::translate(glm::mat4(1.0F), camera.position);
+
+        return glm::inverse(T * R);
     }
-    if (glfwGetKey(pWindow, GLFW_KEY_RIGHT) == GLFW_PRESS)
+
+    double mousex = 0.0;
+    double mousey = 0.0;
+    glfwGetCursorPos(pWindow, &mousex, &mousey);
+    glm::vec2 currentMousePosition = { mousex, mousey };
+
+    if (camera.firstMouse)
     {
-        rot.y -= 1.0F;
+        camera.lastMousePosition = currentMousePosition;
+        camera.firstMouse = false;
     }
-    if (glm::any(glm::notEqual(rot, glm::vec3(0.0F))))
+
+    glm::vec2 delta = currentMousePosition - camera.lastMousePosition;
+    camera.lastMousePosition = currentMousePosition;
+
+    if (delta.x != 0.0f || delta.y != 0.0f)
     {
-        camera.rotation += glm::normalize(rot) * sens * dt;
+        camera.rotation.x -= delta.y * 0.05f; // pitch
+        camera.rotation.y -= delta.x * 0.05f; // yaw
     }
 
     camera.rotation.y = glm::mod(camera.rotation.y, 360.0F);
