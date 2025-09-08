@@ -1,4 +1,4 @@
-#include "Shared.slangi"
+#include "Shared.slang"
 
 [[vk::push_constant]]
 GraphicsPipelinePushConstants PushConst;
@@ -21,8 +21,8 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
     int2 halfFramebuffer = int2(uLongLifeGlobals.framebufferSize * float2(0.5));
 
     // Find out what bin this tile is a part of and its bounds
-    const uint2 mappedWorkgroupId = workgroupId.xy / uint2(16);
-    const uint binOffset = (mappedWorkgroupId.y * 4) + mappedWorkgroupId.x;
+    const uint2 mappedWorkgroupId = workgroupId.xy / WorkgroupSize().xy;
+    const uint binOffset = (mappedWorkgroupId.y * uLongLifeGlobals.ultraCoarseRasterDispatchSize.x) + mappedWorkgroupId.x;
     const uint offsetToDensityBitmaps = binOffset * BIN_DATA_STRIDE;
     const uint offsetToPrimitiveBitmaps = offsetToDensityBitmaps + MAX_DENSITY_BITMAP_BLOCK_COUNT;
 
