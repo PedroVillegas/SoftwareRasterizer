@@ -9,7 +9,7 @@
 // Each thread maps 32 contiguous Primitive Bitmap blocks to a single
 // Density Bitmap block.
 
-#include "Shared.slangi"
+#include "Shared.slang"
 
 [[vk::push_constant]]
 GraphicsPipelinePushConstants PushConst;

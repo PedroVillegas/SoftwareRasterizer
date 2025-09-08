@@ -1,50 +1,61 @@
+#pragma DO_NOT_COMPILE
+
+#ifndef _STREAM_COMPACTION_H_
+#define _STREAM_COMPACTION_H_
+
 // Divides the input elements into many 1024-element sized groups.
 // Each group is further divided into 16 subgroups and each subgroup has 64 elements.
 // This allows each group to be processed by a single 64-thread wave.
 // A single workgroup invocation can therefore process upto 1024x1024 = 1,048,576 elements.
 
-#include "Shared.slangi"
-
-[[vk::push_constant]]
-GraphicsPipelinePushConstants PushConst;
-
-static const uint waveSize = WaveGetLaneCount();
 groupshared uint smemInterWaveOffset;
 
-[shader("compute")]
-[numthreads(1024, 1, 1)]
-void main(uint2 id : SV_DispatchThreadID)
+interface StreamCompactionPredicateEvaluationFn
 {
-    uint N = PushConst.verticesCount;
-    if (id.x >= (max(N, 1024) >> 10) << 6) return;
+    associatedtype PRED_TYPE : IArithmetic;
+    associatedtype BUFFER_ELEM_TYPE;
 
-    // if (id.x == 0) printf("# Active Threads = %u", (max(N, 1024) >> 10) << 6);
+    bool EvaluatePredicate(const PRED_TYPE item);
 
-    if (id.x == 0) smemInterWaveOffset = 0;
+    PRED_TYPE GetPredicateElement(BUFFER_ELEM_TYPE* src, const uint index);
+};
+
+__generic<ELEM_TYPE, PRED_EVAL_FN>
+void StreamCompactionNonOrderPreserving(const uint globalThreadId, ELEM_TYPE* src, ELEM_TYPE* dst,
+                                        const uint srcOffset, const uint srcSize,
+                                        __ref uint globalMemDstSize, PRED_EVAL_FN predEvalFn)
+    where PRED_EVAL_FN : StreamCompactionPredicateEvaluationFn
+    where ELEM_TYPE == PRED_EVAL_FN.BUFFER_ELEM_TYPE
+{
+    if (globalThreadId >= (max(srcSize, 1024) >> 10) << 6) return;
+
+    if (globalThreadId == 0) smemInterWaveOffset = 0;
     GroupMemoryBarrierWithGroupSync();
 
-    uint warpId = id.x >> 6;
-    uint laneId = id.x % waveSize;
+    uint waveSize = 64;
+    uint warpId = globalThreadId >> 6; // 2^6 = 64 for 64-wide wave
+    uint laneId = globalThreadId % waveSize;
     uint blockOffset = warpId << 10;
 
     uint2 predmask = uint2(0);
     uint2 counts = uint2(0);
     uint count = 0;
+
     // Stage 1 - count and predicateMask for each block
     for (uint i = 0; i < 16; i++)
     {
-        float el = float(CULLED_VERTEX);
+        bool predicate = false;
 
         // Fetch 64 elements, 1 per lane
         uint index = blockOffset + (i << 6) + laneId;
-        if (index < N)
+        if (index < srcSize)
         {
-            el = PushConst.intrinsicDataBuffer[index].position.x;
+            PRED_EVAL_FN.PRED_TYPE item = predEvalFn.GetPredicateElement(Ptr<PRED_EVAL_FN.BUFFER_ELEM_TYPE>(src), srcOffset + index);
+            predicate = predEvalFn.EvaluatePredicate(item);
         }
 
         // Predicate mask
-        bool p = el != float(CULLED_VERTEX);
-        uint2 mask = WaveActiveBallot(p).xy;
+        uint2 mask = WaveActiveBallot(predicate).xy;
 
         // Lane 0 stores the count and predicate mask of elements 0...63,
         // Lane 1 stores the count and predicate mask of elements 64...127 etc.
@@ -56,9 +67,6 @@ void main(uint2 id : SV_DispatchThreadID)
         }
     }
 
-    // if (laneId < 16 && warpId == 0)
-    //         printf("thread: %u, count: %u\n", id.x, count);
-
     // Stage 2 - Prefix sum on count
     for (uint i = 1; i < 16; i++)
     {
@@ -66,23 +74,18 @@ void main(uint2 id : SV_DispatchThreadID)
         if (laneId == i) count += n;
     }
 
-    // if (laneId == 15)
-    //     printf("thread: %u, count: %u\n", id.x, count);
-
     // Stage 3 - compute interWaveOffset
     uint orig;
     if (laneId == 15)
     {
-        // printf("thread: %u, count: %u\n", id.x, count);
         InterlockedAdd(smemInterWaveOffset, count, orig);
     }
 
     uint interWaveOffset = WaveReadLaneAt(orig, 15);
 
-    // if (laneId == 0 && warpId == 0)
-    //     printf("thread: %u, count: %u\n", id.x, interWaveOffset);
-    // if (laneId == 0 && warpId == 1)
-    //     printf("thread: %u, count: %u\n", id.x, interWaveOffset);
+    uint dstBufferOffset = 0;
+    if (laneId == 15) InterlockedAdd(globalMemDstSize, interWaveOffset + count, dstBufferOffset);
+    dstBufferOffset = WaveReadLaneAt(dstBufferOffset, 15);
 
     for (uint i = 0; i < 16; i++)
     {
@@ -99,7 +102,7 @@ void main(uint2 id : SV_DispatchThreadID)
             if ((mask.x & predtest) > 0)
             {
                 intraBlockOffset = countbits(mask.x & (predtest - 1));
-                PushConst.compactedIntrinsicDataBuffer[interWaveOffset + interBlockOffset + intraBlockOffset] = PushConst.intrinsicDataBuffer[index];
+                dst[dstBufferOffset + interWaveOffset + interBlockOffset + intraBlockOffset] = src[srcOffset + index];
             }
         }
         else
@@ -108,10 +111,10 @@ void main(uint2 id : SV_DispatchThreadID)
             if ((mask.y & predtest) > 0)
             {
                 intraBlockOffset = counts64.x + countbits(mask.y & (predtest - 1));
-                PushConst.compactedIntrinsicDataBuffer[interWaveOffset + interBlockOffset + intraBlockOffset] = PushConst.intrinsicDataBuffer[index];
+                dst[dstBufferOffset + interWaveOffset + interBlockOffset + intraBlockOffset] = src[srcOffset + index];
             }
         }
     }
-
-    if (laneId == 15) InterlockedAdd(PushConst.metaDataBuffer[0].compactedIntrinsicDataBufferSize, interWaveOffset + count);
 }
+
+#endif // _STREAM_COMPACTION_H_

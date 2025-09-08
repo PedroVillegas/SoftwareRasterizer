@@ -267,20 +267,15 @@ int main()
     const Grace::PipelineHandle primitiveAsmPipeline = pDevice->CreatePipeline(pbuilder.pipelineDesc);
 
     pbuilder.ClearShaders();
-    pbuilder.AddShader("StreamCompactorNonOrderPreserving.slang.spv", VK_SHADER_STAGE_COMPUTE_BIT);
-    pbuilder.BuildComputePipeline("GSR::streamCompactorNonOrderPreservingPipeline", pDevice->GetSolePipelineLayout());
-    const Grace::PipelineHandle streamCompactorNonOrderPreservingPipeline =
+    pbuilder.AddShader("NativePrimitivesCompaction.slang.spv", VK_SHADER_STAGE_COMPUTE_BIT);
+    pbuilder.BuildComputePipeline("GSR::nativePrimitivesCompactionPipeline", pDevice->GetSolePipelineLayout());
+    const Grace::PipelineHandle nativePrimitivesCompactionPipeline =
         pDevice->CreatePipeline(pbuilder.pipelineDesc);
 
     pbuilder.ClearShaders();
-    pbuilder.AddShader("MoveClipperEmittedPrimitives.slang.spv", VK_SHADER_STAGE_COMPUTE_BIT);
-    pbuilder.BuildComputePipeline("GSR::moveClipperEmittedPrimitivesPipeline", pDevice->GetSolePipelineLayout());
-    const Grace::PipelineHandle moveClipperEmittedPrimitivesPipeline = pDevice->CreatePipeline(pbuilder.pipelineDesc);
-
-    pbuilder.ClearShaders();
-    pbuilder.AddShader("StreamCompactionRound2.slang.spv", VK_SHADER_STAGE_COMPUTE_BIT);
-    pbuilder.BuildComputePipeline("GSR::streamCompactionRound2", pDevice->GetSolePipelineLayout());
-    const Grace::PipelineHandle streamCompactionRound2Pipeline = pDevice->CreatePipeline(pbuilder.pipelineDesc);
+    pbuilder.AddShader("ClipperEmittedPrimitivesCompaction.slang.spv", VK_SHADER_STAGE_COMPUTE_BIT);
+    pbuilder.BuildComputePipeline("GSR::clipperEmittedPrimitivesCompaction", pDevice->GetSolePipelineLayout());
+    const Grace::PipelineHandle clipperEmittedPrimitivesCompactionPipeline = pDevice->CreatePipeline(pbuilder.pipelineDesc);
 
     // Cube
     // clang-format off
@@ -416,7 +411,7 @@ int main()
         cmd.Dispatch(glm::ceil(windowWidth / 16.0F), glm::ceil(windowHeight / 16.0F));
 
         cmd.FillBuffer(metaDataBuffer, 0);
-        //cmd.FillBuffer(compactedInstrinsicDataBuffer, 0);
+        // cmd.FillBuffer(compactedInstrinsicDataBuffer, 0);
         cmd.FillBuffer(graphicsPipelineInstrinsicVariablesBuffer, 0);
 
         cmd.AddMemoryBarrier({ Grace::AccessType::ClearWrite },
@@ -482,8 +477,8 @@ int main()
         cmd.PipelineBarrier();
 
         // TODO: Make this an indirect dispatch (valid vertices / (1024 * 1024))
-        cmd.BeginDebugLabel("Stream Compaction Stage");
-        cmd.BindPipeline(streamCompactorNonOrderPreservingPipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
+        cmd.BeginDebugLabel("Native Primitives Compaction Stage");
+        cmd.BindPipeline(nativePrimitivesCompactionPipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
         cmd.Dispatch(1);
         cmd.EndDebugLabel();
 
@@ -491,18 +486,8 @@ int main()
                              { Grace::AccessType::ComputeShaderStorageRead });
         cmd.PipelineBarrier();
 
-        // TODO: This should also be an indirect dispatch
-        cmd.BeginDebugLabel("Copy Clipper Emitted Primitives");
-        cmd.BindPipeline(moveClipperEmittedPrimitivesPipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
-        // cmd.Dispatch(1);
-        cmd.EndDebugLabel();
-
-        cmd.AddMemoryBarrier({ Grace::AccessType::ComputeShaderWrite },
-                             { Grace::AccessType::ComputeShaderStorageRead });
-        cmd.PipelineBarrier();
-
-        cmd.BeginDebugLabel("Stream Compaction Stage");
-        cmd.BindPipeline(streamCompactionRound2Pipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
+        cmd.BeginDebugLabel("Clipper Emitted Primitives Compaction Stage");
+        cmd.BindPipeline(clipperEmittedPrimitivesCompactionPipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
         cmd.Dispatch(1);
         cmd.EndDebugLabel();
 

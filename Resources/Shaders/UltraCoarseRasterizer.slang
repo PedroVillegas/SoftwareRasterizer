@@ -6,8 +6,8 @@
 // the workgroup each thread will consume and process a triangle until
 // all triangles have been processed.
 
-#include "Shared.slangi"
-#include "RasterizerUtility.slangi"
+#include "Shared.slang"
+#include "RasterizerUtility.slang"
 
 [[vk::push_constant]]
 GraphicsPipelinePushConstants PushConst;
@@ -22,7 +22,7 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
           uint3 workgroupId : SV_GroupID,
           uint3 localThreadId : SV_GroupThreadID)
 {
-    const uint intrinsicDataBufferSize = PushConst.metaDataBuffer[0].compactedIntrinsicDataBufferSize;//  + PushConst.metaDataBuffer[0].validClipperEmittedTrianglesCount;
+    const uint intrinsicDataBufferSize = PushConst.metaDataBuffer[0].compactedIntrinsicDataBufferSize;
     uint triangleCount = intrinsicDataBufferSize / 3;
     smemPerBinPrimitiveCounter = 0;
     smemTrianglesProcessed = 0;

@@ -1,7 +1,7 @@
 // The Primitive Prep stage
 
-#include "Shared.slangi"
-#include "RasterizerUtility.slangi"
+#include "Shared.slang"
+#include "RasterizerUtility.slang"
 
 [[vk::push_constant]]
 GraphicsPipelinePushConstants PushConst;
@@ -116,6 +116,9 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
     PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
     PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
 
+    // There are few cases where a primitive may be fully outside the clip volume
+    // but, not all vertices are outside a single clip plane so it slips past
+    // the trivial reject test and causes the clipper to produce a polygon with no vertices...
     if (clipped.vertexCount < 3)
     {
         // printf("VERTEX COUNT = %i\n", clipped.vertexCount);
@@ -137,7 +140,7 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
         Triangle processed = ProcessPrimitive(clipped.vertices[0], clipped.vertices[i + 1], clipped.vertices[i + 2]);
 
         uint offset = uLongLifeGlobals.clipperEmittedVerticesOffset + orig + (i * 3);
-        PushConst.intrinsicDataBuffer[offset].position = float4(processed.v0, 0.0, triangleBeginOffset + i);
+        PushConst.intrinsicDataBuffer[offset].position = float4(processed.v0, 0.0, triangleBeginOffset /* + i */);
         PushConst.intrinsicDataBuffer[offset + 1].position = float4(processed.v1, 0.0, 0.0);
         PushConst.intrinsicDataBuffer[offset + 2].position = float4(processed.v2, 0.0, 0.0);
 
