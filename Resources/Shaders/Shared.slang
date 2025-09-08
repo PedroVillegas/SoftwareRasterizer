@@ -1,3 +1,5 @@
+#pragma DO_NOT_COMPILE
+
 #ifndef _SHARED_H_
 #define _SHARED_H_
 
@@ -87,4 +89,4 @@ struct Line
     int2 end;
 };
 
-#endif
+#endif // _SHARED_H

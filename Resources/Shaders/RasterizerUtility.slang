@@ -1,3 +1,10 @@
+#pragma DO_NOT_COMPILE
+
+#ifndef _RASTERIZER_UTILITY_H_
+#define _RASTERIZER_UTILITY_H_
+
+#include "Shared.slang"
+
 bool PointNotInRegionPixelSpace(int2 regionMin, int2 regionMax, int2 point)
 {
     return any(point > regionMax) || any(point < regionMin);
@@ -163,3 +170,5 @@ bool SameSigns(int a, int b)
 {
     return (a > 0 && b > 0) || (a < 0 && b < 0);
 }
+
+#endif // _RASTERIZER_UTILITY_H_

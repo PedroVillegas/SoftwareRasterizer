@@ -210,6 +210,12 @@ set(SLANG_COMPILE_DEBUG_INFO -g0)
 set(SLANG_COMPILE_OPT -O2)
 
 foreach(SLANG ${SLANG_FILES})
+    file(STRINGS ${SLANG} PRAGMA LIMIT_INPUT 23 REGEX "#pragma")
+    if ("${PRAGMA}" STREQUAL "#pragma DO_NOT_COMPILE")
+        message("Ignoring ${SLANG}")
+        continue()
+    endif()
+
     get_filename_component(FILE_NAME ${SLANG} NAME)
     set(SPIRV "${GRACE_SPIRV_DIR}/${FILE_NAME}.spv")
 
