@@ -5,6 +5,9 @@
 #include <GLFW/glfw3.h>
 #include <Grace/Grace.hpp>
 
+#include <Camera.hpp>
+#include <GltfLoader.hpp>
+
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
@@ -45,26 +48,7 @@ struct FrameData
     Grace::CommandPool* pCmdPool = nullptr;
     Grace::CommandBuffer cmd = {};
     Grace::FenceHandle inFlightFence = {};
-
-    Grace::BufferHandle rasterizerBinsBuffer = {};
 };
-
-struct Camera
-{
-    glm::vec3 position = { 0.0F, 0.0F, 0.0F };
-    glm::vec3 rotation = { 0.0F, 0.0F, 0.0F };
-    glm::vec2 lastMousePosition = { 0.0F, 0.0F };
-    bool locked = true;
-    bool firstMouse = true;
-};
-
-struct Vertex
-{
-    glm::vec3 position = { 0.0F, 0.0F, 0.0F };
-    glm::vec2 uv = { 0.0F, 0.0F };
-};
-
-static glm::mat4 HandleCamera(GLFWwindow* pWindow, Camera& camera, float dt, float speed, float sens);
 
 int main()
 {
@@ -86,7 +70,7 @@ int main()
     constexpr uint32_t maxResolutionHeight = 1080;
     constexpr uint32_t maxPrimitivesPerBinOrTile = 1 << 16;
     constexpr uint32_t primitiveBitmapBlockCount = 1024; //maxPrimitivesPerBinOrTile >> 5;
-    constexpr uint32_t densityBitmapBlockCount = primitiveBitmapBlockCount >> 5;
+    constexpr uint32_t densityBitmapBlockCount = 1;
     constexpr uint32_t coarseRasterizerTileSize = 16;
     constexpr uint32_t binningRasterizerTileCount = 16; // count x count tiles in a single bin
     constexpr uint32_t binningRasterizerBinSize = 256;  // coarseRasterizerTileSize * binningRasterizerTileCount;
@@ -95,7 +79,7 @@ int main()
         glm::ceil(static_cast<float>(maxResolutionWidth) / binningRasterizerBinSize)
         * glm::ceil(static_cast<float>(maxResolutionHeight) / binningRasterizerBinSize);
     const size_t binningRasterizerBufferSize =
-        binningRasterizerTotalBinCount * sizeof(uint32_t) * (densityBitmapBlockCount + primitiveBitmapBlockCount);
+        binningRasterizerTotalBinCount * sizeof(uint32_t) * (densityBitmapBlockCount * (1 + primitiveBitmapBlockCount));
 
     uint32_t previousVertexCount = 0;
 
@@ -147,7 +131,7 @@ int main()
     pdp.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
     pdp.pNext = nullptr;
     vkGetPhysicalDeviceProperties2(pDevice->GetPhysicalDevice(), &pdp);
-    //std::cout << "maxVertexInputAttributes: " << pdp.properties.limits.maxVertexInputAttributes;
+    // std::cout << "\nmaxComputeSharedMemorySize: " << pdp.properties.limits.maxComputeSharedMemorySize;
 
     // Must first create the swapchain with desired extents
     pDevice->CreateSwapchain({ windowWidth, windowHeight }, vsync);
@@ -169,8 +153,8 @@ int main()
         });
     }
 
-    const Grace::BufferHandle rasterizerBinsBuffer = pDevice->CreateBuffer({
-        .name = "GSR::rasterizerBinsBuffer",
+    const Grace::BufferHandle tileDataBuffer = pDevice->CreateBuffer({
+        .name = "GSR::tileDataBuffer",
         .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
                | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         .allocFlags = 0,
@@ -187,8 +171,8 @@ int main()
         .data = nullptr,
     });
 
-    const Grace::BufferHandle graphicsPipelineInstrinsicVariablesBuffer = pDevice->CreateBuffer({
-        .name = "GSR::graphicsPipelineInstrinsicVariablesBuffer",
+    const Grace::BufferHandle graphicsPipelineInstrinsicDataBuffer = pDevice->CreateBuffer({
+        .name = "GSR::graphicsPipelineInstrinsicDataBuffer",
         .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
                | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         .allocFlags = 0,
@@ -269,78 +253,46 @@ int main()
     pbuilder.ClearShaders();
     pbuilder.AddShader("NativePrimitivesCompaction.slang.spv", VK_SHADER_STAGE_COMPUTE_BIT);
     pbuilder.BuildComputePipeline("GSR::nativePrimitivesCompactionPipeline", pDevice->GetSolePipelineLayout());
-    const Grace::PipelineHandle nativePrimitivesCompactionPipeline =
-        pDevice->CreatePipeline(pbuilder.pipelineDesc);
+    const Grace::PipelineHandle nativePrimitivesCompactionPipeline = pDevice->CreatePipeline(pbuilder.pipelineDesc);
 
     pbuilder.ClearShaders();
     pbuilder.AddShader("ClipperEmittedPrimitivesCompaction.slang.spv", VK_SHADER_STAGE_COMPUTE_BIT);
     pbuilder.BuildComputePipeline("GSR::clipperEmittedPrimitivesCompaction", pDevice->GetSolePipelineLayout());
-    const Grace::PipelineHandle clipperEmittedPrimitivesCompactionPipeline = pDevice->CreatePipeline(pbuilder.pipelineDesc);
+    const Grace::PipelineHandle clipperEmittedPrimitivesCompactionPipeline =
+        pDevice->CreatePipeline(pbuilder.pipelineDesc);
 
-    // Cube
-    // clang-format off
-    const std::array vertices = {
-        // Front face
-        Vertex(glm::vec3(-0.5F, -0.5F,  0.5F),  glm::vec2(0.0F, 0.0F)),
-        Vertex(glm::vec3( 0.5F, -0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
-        Vertex(glm::vec3( 0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 1.0F)),
-        Vertex(glm::vec3( 0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 1.0F)),
-        Vertex(glm::vec3(-0.5F,  0.5F,  0.5F),  glm::vec2(0.0F, 1.0F)),
-        Vertex(glm::vec3(-0.5F, -0.5F,  0.5F),  glm::vec2(0.0F, 0.0F)),
-        // Rear face
-        Vertex(glm::vec3(-0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 0.0F)),
-        Vertex(glm::vec3( 0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
-        Vertex(glm::vec3( 0.5F, -0.5F, -0.5F),  glm::vec2(1.0F, 0.0F)),
-        Vertex(glm::vec3(-0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 0.0F)),
-        Vertex(glm::vec3(-0.5F,  0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
-        Vertex(glm::vec3( 0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
-        // Left face
-        Vertex(glm::vec3(-0.5F, -0.5F,  0.5F),  glm::vec2(0.0F, 0.0F)),
-        Vertex(glm::vec3(-0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
-        Vertex(glm::vec3(-0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
-        Vertex(glm::vec3(-0.5F, -0.5F,  0.5F),  glm::vec2(0.0F, 0.0F)),
-        Vertex(glm::vec3(-0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
-        Vertex(glm::vec3(-0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
-        // Right face
-        Vertex(glm::vec3(0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
-        Vertex(glm::vec3(0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
-        Vertex(glm::vec3(0.5F, -0.5F,  0.5F),  glm::vec2(0.0F, 0.0F)),
-        Vertex(glm::vec3(0.5F, -0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
-        Vertex(glm::vec3(0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
-        Vertex(glm::vec3(0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
-        // Bottom face
-        Vertex(glm::vec3(-0.5F, -0.5F, -0.5F), glm::vec2(0.0F, 1.0F)),
-        Vertex(glm::vec3( 0.5F, -0.5F, -0.5F), glm::vec2(1.0F, 1.0F)),
-        Vertex(glm::vec3( 0.5F, -0.5F,  0.5F), glm::vec2(1.0F, 0.0F)),
-        Vertex(glm::vec3( 0.5F, -0.5F,  0.5F), glm::vec2(1.0F, 0.0F)),
-        Vertex(glm::vec3(-0.5F, -0.5F,  0.5F), glm::vec2(0.0F, 0.0F)),
-        Vertex(glm::vec3(-0.5F, -0.5F, -0.5F), glm::vec2(0.0F, 1.0F)),
-        // Top face
-        Vertex(glm::vec3( 0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
-        Vertex(glm::vec3(-0.5F,  0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
-        Vertex(glm::vec3(-0.5F,  0.5F,  0.5F),  glm::vec2(0.0F, 0.0F)),
-        Vertex(glm::vec3( 0.5F,  0.5F,  0.5F),  glm::vec2(1.0F, 0.0F)),
-        Vertex(glm::vec3( 0.5F,  0.5F, -0.5F),  glm::vec2(1.0F, 1.0F)),
-        Vertex(glm::vec3(-0.5F,  0.5F, -0.5F),  glm::vec2(0.0F, 1.0F)),
-    };
-    // clang-format on
+    // std::optional<Scene> testScene = LoadGltf(RESOURCES_PATH "Models/damaged-helmet/damagedHelmet.gltf");
+    // std::optional<Scene> testScene = LoadGltf(RESOURCES_PATH "Models/Key.glb");
+    std::optional<Scene> testScene = LoadGltf(RESOURCES_PATH "Models/Rock.glb");
+    assert(testScene.has_value());
 
     const Grace::BufferHandle vertexBuffer = pDevice->CreateBuffer({
         .name = "GSR::vertexBuffer",
         .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
                | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         .allocFlags = 0,
-        .size = vertices.size() * sizeof(Vertex),
-        .data = vertices.data(),
+        .size = testScene.value().vertices.size() * sizeof(Vertex),
+        .data = testScene.value().vertices.data(),
+    });
+
+    const Grace::BufferHandle indexBuffer = pDevice->CreateBuffer({
+        .name = "GSR::indexBuffer",
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+               | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .allocFlags = 0,
+        .size = testScene.value().indices.size() * sizeof(uint32_t),
+        .data = testScene.value().indices.data(),
     });
 
     // MVP
     Camera cam = {};
-    cam.position = { 1.5F, 1.5F, -3.0F };
-    cam.rotation = { -25.0F, 25.0F, 0.0F };
-    // cam.rotation = { 0.0F, 0.0F, 0.0F };
+    // cam.position = { 1.5F, 1.5F, -3.0F };
+    // cam.rotation = { -25.0F, 25.0F, 0.0F };
+    cam.position = { -5.53F, 4.01F, 43.21F };
+    cam.rotation = { -20.35F, 331.95F, 0.0F };
 
-    glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -6.0f));
+    // glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -6.0f));
+    glm::mat4 model = glm::scale(glm::mat4(1.0f), glm::vec3(100.0F));
     glm::mat4 view = glm::mat4(1.0f);
     glm::mat4 proj = glm::perspectiveFov(
         glm::radians(45.0f), static_cast<float>(windowWidth), static_cast<float>(windowHeight), 0.001F, 1000.0F);
@@ -358,7 +310,7 @@ int main()
         glfwPollEvents();
 
         // model = glm::rotate(model, 0.5F * dt, glm::vec3(1.0F, 1.0F, 1.0F));
-        view = HandleCamera(pWindow, cam, dt, cameraSpeed, cameraSensitivity);
+        view = cam.Update(pWindow, dt, cameraSpeed, cameraSensitivity);
         proj = glm::perspectiveFov(
             glm::radians(45.0f), static_cast<float>(windowWidth), static_cast<float>(windowHeight), 0.001F, 1000.0F);
         proj[1][1] *= -1.0f;
@@ -411,8 +363,8 @@ int main()
         cmd.Dispatch(glm::ceil(windowWidth / 16.0F), glm::ceil(windowHeight / 16.0F));
 
         cmd.FillBuffer(metaDataBuffer, 0);
-        // cmd.FillBuffer(compactedInstrinsicDataBuffer, 0);
-        cmd.FillBuffer(graphicsPipelineInstrinsicVariablesBuffer, 0);
+        cmd.FillBuffer(compactedInstrinsicDataBuffer, 0);
+        cmd.FillBuffer(graphicsPipelineInstrinsicDataBuffer, 0);
 
         cmd.AddMemoryBarrier({ Grace::AccessType::ClearWrite },
                              { Grace::AccessType::ComputeShaderStorageRead, Grace::AccessType::ClearWrite });
@@ -427,20 +379,22 @@ int main()
         {
             struct PC
             {
-                uint64_t intrinsicDataBuffer;
-                uint64_t vbuffer;
                 glm::mat4 mvp;
-                uint32_t vertexCount;
+                uint64_t intrinsicDataBuffer;
+                uint64_t vertexBuffer;
+                uint64_t indexBuffer;
+                uint32_t indexCount;
             } pc;
 
-            pc.intrinsicDataBuffer = pDevice->GetBuffer(graphicsPipelineInstrinsicVariablesBuffer).GetBDA();
-            pc.vbuffer = pDevice->GetBuffer(vertexBuffer).GetBDA();
             pc.mvp = mvp;
-            pc.vertexCount = vertices.size();
+            pc.intrinsicDataBuffer = pDevice->GetBuffer(graphicsPipelineInstrinsicDataBuffer).GetBDA();
+            pc.vertexBuffer = pDevice->GetBuffer(vertexBuffer).GetBDA();
+            pc.indexBuffer = pDevice->GetBuffer(indexBuffer).GetBDA();
+            pc.indexCount = testScene.value().indices.size();
             cmd.PushConstants(pDevice->GetSolePipelineLayout(), sizeof(pc), &pc);
         }
 
-        cmd.Dispatch(glm::floor(vertices.size() / 256.0F) + 1);
+        cmd.Dispatch(glm::floor(testScene.value().indices.size() / 256.0F) + 1);
         cmd.EndDebugLabel();
 
         cmd.AddMemoryBarrier({ Grace::AccessType::ComputeShaderWrite },
@@ -449,7 +403,7 @@ int main()
 
         struct PC
         {
-            uint64_t binningRasterizerCounterBuffer;
+            uint64_t tileDataBuffer;
             uint64_t intrinsicDataBuffer;
             uint64_t compactedIntrinsicDataBuffer;
             uint64_t metaDataBuffer;
@@ -458,18 +412,18 @@ int main()
             uint32_t renderImgId;
         } pc;
 
-        pc.binningRasterizerCounterBuffer = pDevice->GetBuffer(rasterizerBinsBuffer).GetBDA();
-        pc.intrinsicDataBuffer = pDevice->GetBuffer(graphicsPipelineInstrinsicVariablesBuffer).GetBDA();
+        pc.tileDataBuffer = pDevice->GetBuffer(tileDataBuffer).GetBDA();
+        pc.intrinsicDataBuffer = pDevice->GetBuffer(graphicsPipelineInstrinsicDataBuffer).GetBDA();
         pc.compactedIntrinsicDataBuffer = pDevice->GetBuffer(compactedInstrinsicDataBuffer).GetBDA();
         pc.metaDataBuffer = pDevice->GetBuffer(metaDataBuffer).GetBDA();
-        pc.triangleCount = vertices.size() / 3;
-        pc.verticesCount = vertices.size();
+        pc.triangleCount = testScene.value().indices.size() / 3;
+        pc.verticesCount = testScene.value().indices.size();
         pc.renderImgId = pDevice->GetImage(renderImg).GetStorageImgId();
         cmd.PushConstants(pDevice->GetSolePipelineLayout(), sizeof(pc), &pc);
 
         cmd.BeginDebugLabel("Primitive Assembly Stage");
         cmd.BindPipeline(primitiveAsmPipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
-        cmd.Dispatch(glm::floor(vertices.size() / 256.0F) + 1);
+        cmd.Dispatch(glm::floor(pc.triangleCount / 256.0F) + 1);
         cmd.EndDebugLabel();
 
         cmd.AddMemoryBarrier({ Grace::AccessType::ComputeShaderWrite },
@@ -664,92 +618,4 @@ int main()
 
     glfwTerminate();
     return 0;
-}
-
-glm::mat4 HandleCamera(GLFWwindow* pWindow, Camera& camera, float dt, float speed, float sens)
-{
-    if (glfwGetKey(pWindow, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-    {
-        glfwSetInputMode(pWindow, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-        camera.locked = true;
-    }
-
-    if (glfwGetKey(pWindow, GLFW_KEY_F) == GLFW_PRESS)
-    {
-        glfwSetInputMode(pWindow, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-        camera.locked = false;
-        camera.firstMouse = true;
-    }
-
-    if (camera.locked)
-    {
-        glm::quat pitchRotation = glm::angleAxis(glm::radians(camera.rotation.x), glm::vec3 { 1.0F, 0.0F, 0.0F });
-        glm::quat yawRotation = glm::angleAxis(glm::radians(camera.rotation.y), glm::vec3 { 0.0F, 1.0F, 0.0F });
-
-        glm::mat4 R = glm::toMat4(yawRotation) * glm::toMat4(pitchRotation);
-        glm::mat4 T = glm::translate(glm::mat4(1.0F), camera.position);
-
-        return glm::inverse(T * R);
-    }
-
-    double mousex = 0.0;
-    double mousey = 0.0;
-    glfwGetCursorPos(pWindow, &mousex, &mousey);
-    glm::vec2 currentMousePosition = { mousex, mousey };
-
-    if (camera.firstMouse)
-    {
-        camera.lastMousePosition = currentMousePosition;
-        camera.firstMouse = false;
-    }
-
-    glm::vec2 delta = currentMousePosition - camera.lastMousePosition;
-    camera.lastMousePosition = currentMousePosition;
-
-    if (delta.x != 0.0f || delta.y != 0.0f)
-    {
-        camera.rotation.x -= delta.y * 0.05f; // pitch
-        camera.rotation.y -= delta.x * 0.05f; // yaw
-    }
-
-    camera.rotation.y = glm::mod(camera.rotation.y, 360.0F);
-    camera.rotation.x = glm::clamp(camera.rotation.x, -89.0F, 89.0F);
-
-    glm::quat pitchRotation = glm::angleAxis(glm::radians(camera.rotation.x), glm::vec3 { 1.0F, 0.0F, 0.0F });
-    glm::quat yawRotation = glm::angleAxis(glm::radians(camera.rotation.y), glm::vec3 { 0.0F, 1.0F, 0.0F });
-
-    glm::mat4 R = glm::toMat4(yawRotation) * glm::toMat4(pitchRotation);
-
-    glm::vec3 move = glm::vec3(0.0F);
-    if (glfwGetKey(pWindow, GLFW_KEY_W) == GLFW_PRESS)
-    {
-        move.z -= 1.0F;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_S) == GLFW_PRESS)
-    {
-        move.z += 1.0F;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_A) == GLFW_PRESS)
-    {
-        move.x -= 1.0F;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_D) == GLFW_PRESS)
-    {
-        move.x += 1.0F;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_SPACE) == GLFW_PRESS)
-    {
-        move.y += 1.0F;
-    }
-    if (glfwGetKey(pWindow, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
-    {
-        move.y -= 1.0F;
-    }
-    if (glm::any(glm::notEqual(move, glm::vec3(0.0F))))
-    {
-        camera.position += glm::normalize(glm::mat3(R) * move) * speed * dt;
-    }
-    glm::mat4 T = glm::translate(glm::mat4(1.0F), camera.position);
-
-    return glm::inverse(T * R);
 }

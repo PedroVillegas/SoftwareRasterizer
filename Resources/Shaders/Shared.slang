@@ -9,6 +9,11 @@
 [[vk::binding(STORAGE_IMAGE_BINDING, 0)]]
 __DynamicResource uStorageTextures[];
 
+struct HomogeneousPosition
+{
+    float4 p;
+};
+
 struct GraphicsPipelineIntrinsicData
 {
     float4 position;
@@ -51,8 +56,8 @@ ConstantBuffer<LongLifetimeGlobalVars> uLongLifeGlobals;
 // This should be a power of 2
 static const uint MAX_PRIMITIVE_BITMAP_BLOCK_COUNT = 1024;
 
-static const uint MAX_DENSITY_BITMAP_BLOCK_COUNT = 32;//MAX_PRIMITIVE_BITMAP_BLOCK_COUNT >> 5;
-static const uint BIN_DATA_STRIDE = MAX_DENSITY_BITMAP_BLOCK_COUNT + MAX_PRIMITIVE_BITMAP_BLOCK_COUNT;
+static const uint MAX_DENSITY_BITMAP_BLOCK_COUNT = 1;
+static const uint BIN_DATA_STRIDE = MAX_DENSITY_BITMAP_BLOCK_COUNT * (1 + MAX_PRIMITIVE_BITMAP_BLOCK_COUNT);
 
 static const int CULLED_VERTEX = 0x7FFFFFFF; // Max int32_t
 
@@ -66,6 +71,11 @@ struct Region2D
 {
     int2 min;
     int2 max;
+};
+
+struct TriangleIndexed
+{
+    uint i0, i1, i2;
 };
 
 struct Triangle

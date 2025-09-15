@@ -27,7 +27,7 @@ void StreamCompactionNonOrderPreserving(const uint globalThreadId, ELEM_TYPE* sr
     where PRED_EVAL_FN : StreamCompactionPredicateEvaluationFn
     where ELEM_TYPE == PRED_EVAL_FN.BUFFER_ELEM_TYPE
 {
-    if (globalThreadId >= (max(srcSize, 1024) >> 10) << 6) return;
+    if (globalThreadId >= (max(srcSize, 1024) >> 10) << 7) return;
 
     if (globalThreadId == 0) smemInterWaveOffset = 0;
     GroupMemoryBarrierWithGroupSync();
@@ -84,8 +84,17 @@ void StreamCompactionNonOrderPreserving(const uint globalThreadId, ELEM_TYPE* sr
     uint interWaveOffset = WaveReadLaneAt(orig, 15);
 
     uint dstBufferOffset = 0;
-    if (laneId == 15) InterlockedAdd(globalMemDstSize, interWaveOffset + count, dstBufferOffset);
-    dstBufferOffset = WaveReadLaneAt(dstBufferOffset, 15);
+    if (laneId == 15)
+    {
+        InterlockedAdd(globalMemDstSize, count, dstBufferOffset);
+        // printf("dstBufferOffset: %u, count: %u\n", dstBufferOffset, count);
+    }
+    dstBufferOffset = 0; //WaveReadLaneAt(dstBufferOffset, 15);
+
+    if (warpId == 0 && laneId == 15)
+    {
+        printf("dstBufferOffset: %u, interWaveOffset: %u, count: %u\n", dstBufferOffset, interWaveOffset, count);
+    }
 
     for (uint i = 0; i < 16; i++)
     {
@@ -93,6 +102,7 @@ void StreamCompactionNonOrderPreserving(const uint globalThreadId, ELEM_TYPE* sr
         uint2 mask = WaveReadLaneAt(predmask, i);
         uint2 counts64 = WaveReadLaneAt(counts, i);
         uint index = blockOffset + (i << 6) + laneId;
+
         uint interBlockOffset = 0;
         if (i > 0) interBlockOffset = WaveReadLaneAt(count, i - 1);
 
@@ -103,6 +113,7 @@ void StreamCompactionNonOrderPreserving(const uint globalThreadId, ELEM_TYPE* sr
             {
                 intraBlockOffset = countbits(mask.x & (predtest - 1));
                 dst[dstBufferOffset + interWaveOffset + interBlockOffset + intraBlockOffset] = src[srcOffset + index];
+                // printf("dst index: %u \n", dstBufferOffset + interWaveOffset + interBlockOffset + intraBlockOffset);
             }
         }
         else

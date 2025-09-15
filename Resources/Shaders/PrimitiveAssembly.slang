@@ -7,6 +7,7 @@
 GraphicsPipelinePushConstants PushConst;
 
 #define BACKFACE_CULLING 1
+#define PUSH_ALL_TRIANGLES 1
 
 static const float NEAR_PLANE = 0.01;
 static const Region2D GUARDBAND_CLIP_REGION_RASTER_SPACE = Region2D(-(1 << 14), 1 << 14);
@@ -26,6 +27,19 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
     float4 vtxPosClipSpace_0 = PushConst.intrinsicDataBuffer[triangleBeginOffset].position;
     float4 vtxPosClipSpace_1 = PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position;
     float4 vtxPosClipSpace_2 = PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position;
+
+#if PUSH_ALL_TRIANGLES
+    Triangle processed = ProcessPrimitive(vtxPosClipSpace_0, vtxPosClipSpace_1, vtxPosClipSpace_2);
+
+    // PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(vtxPosRasterSpace_0, 0.0, 0.0);
+    // PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(vtxPosRasterSpace_1, 0.0, 0.0);
+    // PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(vtxPosRasterSpace_2, 0.0, 0.0);
+
+    PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(processed.v0, 1.0, triangleBeginOffset);
+    PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(processed.v1, 1.0, 0.0);
+    PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(processed.v2, 1.0, 0.0);
+    return;
+#endif
 
     // Viewport Culling before clipping
     if (
@@ -55,9 +69,9 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
     )
     {
         // printf("TRIVIAL REJECT\n");
-        PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(float2(CULLED_VERTEX), 0.0, triangleBeginOffset);
-        PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
-        PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
+        PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(float2(CULLED_VERTEX), 1.0, triangleBeginOffset);
+        PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(float2(CULLED_VERTEX), 1.0, 0.0);
+        PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(float2(CULLED_VERTEX), 1.0, 0.0);
         return;
     }
 
@@ -95,11 +109,16 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
         // PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(vtxPosRasterSpace_1, 0.0, 0.0);
         // PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(vtxPosRasterSpace_2, 0.0, 0.0);
 
-        PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(processed.v0, 0.0, triangleBeginOffset);
-        PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(processed.v1, 0.0, 0.0);
-        PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(processed.v2, 0.0, 0.0);
+        PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(processed.v0, 1.0, triangleBeginOffset);
+        PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(processed.v1, 1.0, 0.0);
+        PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(processed.v2, 1.0, 0.0);
         return;
     }
+
+    // PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(float2(CULLED_VERTEX), -2.0, triangleBeginOffset);
+    // PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
+    // PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
+    // return;
 
     // Clip before homogeneous divide!
     Polygon clipped = SutherlandHodgman(
@@ -112,9 +131,9 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
 
     // if (globalThreadId.x == 0) printf("clipped\n");
 
-    PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(float2(CULLED_VERTEX), 0.0, triangleBeginOffset);
-    PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
-    PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
+    PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(float2(CULLED_VERTEX), 1.0, triangleBeginOffset);
+    PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(float2(CULLED_VERTEX), 1.0, 0.0);
+    PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(float2(CULLED_VERTEX), 1.0, 0.0);
 
     // There are few cases where a primitive may be fully outside the clip volume
     // but, not all vertices are outside a single clip plane so it slips past
@@ -140,9 +159,9 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
         Triangle processed = ProcessPrimitive(clipped.vertices[0], clipped.vertices[i + 1], clipped.vertices[i + 2]);
 
         uint offset = uLongLifeGlobals.clipperEmittedVerticesOffset + orig + (i * 3);
-        PushConst.intrinsicDataBuffer[offset].position = float4(processed.v0, 0.0, triangleBeginOffset /* + i */);
-        PushConst.intrinsicDataBuffer[offset + 1].position = float4(processed.v1, 0.0, 0.0);
-        PushConst.intrinsicDataBuffer[offset + 2].position = float4(processed.v2, 0.0, 0.0);
+        PushConst.intrinsicDataBuffer[offset].position = float4(processed.v0, 1.0, triangleBeginOffset /* + i */);
+        PushConst.intrinsicDataBuffer[offset + 1].position = float4(processed.v1, 1.0, 0.0);
+        PushConst.intrinsicDataBuffer[offset + 2].position = float4(processed.v2, 1.0, 0.0);
 
         // printf("\n[Thread-%u] Processed\n%i, %i\n%i, %i\n%i, %i\n", globalThreadId.x,
         //         processed.v0.x, processed.v0.y,
@@ -178,6 +197,10 @@ Triangle ProcessPrimitive(float4 vtxPosClipSpace_0, float4 vtxPosClipSpace_1, fl
     int2 vtxPosRasterSpace_2 = int2(vtxPosNdcSpace_2.xy * halfFramebuffer);
 
     Triangle triangle = Triangle(vtxPosRasterSpace_0, vtxPosRasterSpace_1, vtxPosRasterSpace_2);
+
+#if PUSH_ALL_TRIANGLES
+    return triangle;
+#endif
 
     // Cull triangles with no area
     int area = triangle.SignedArea();

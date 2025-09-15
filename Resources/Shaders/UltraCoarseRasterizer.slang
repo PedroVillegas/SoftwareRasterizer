@@ -40,13 +40,6 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
 
     while (smemTrianglesProcessed < triangleCount)
     {
-        // TODO: Would this work?? Probably faster because triangles will be processed at the same time since no atomics
-
-        // uint triangleBeginOffset = (smemTrianglesProcessed + linearLocalThreadId) * 3;
-        // do stuff...
-        // smemTrianglesProcessed++;
-        // GroupMemoryBarrierWithGroupSync();
-
         uint orig;
         InterlockedAdd(smemTrianglesProcessed, 1, orig);
         uint triangleBeginOffset = orig * 3;
@@ -63,13 +56,21 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
         // Check for trivial reject - no vertices in bin region
         if (!PrimitiveFoundInRegion(triangle, region))
         {
+            // if (all(workgroupId.xy == uint2(0, 0)))
+            //             printf("(Triangle %u)\nNOT IN TILE\n", orig);
             continue;
         }
 
+        // triangleId = indexIntoBitmap * 32 + indexIntoBlock
         const uint indexIntoBlock = orig & 31; // orig % 32
         const uint indexIntoBitmap = orig >> 5; // log_2(32) = 5
 
         InterlockedOr(smemPrimitiveBitmapBlocks[indexIntoBitmap], 1 << indexIntoBlock);
+
+        // if (all(workgroupId.xy == uint2(0, 0)))// && smemTrianglesProcessed < 32)
+        // {
+        //     printf("(Triangle %u)\nsmemPrimBlock = %u, bitmap = %u\n", orig, smemPrimitiveBitmapBlocks[indexIntoBitmap], indexIntoBitmap);
+        // }
     }
 
     GroupMemoryBarrierWithGroupSync();

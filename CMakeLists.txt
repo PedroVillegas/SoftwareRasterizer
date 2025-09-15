@@ -51,6 +51,8 @@ add_executable(Grace_Software_Rasterizer)
 
 target_sources(Grace_Software_Rasterizer PRIVATE
     Source/Main.cpp
+    Source/Camera.cpp
+    Source/GltfLoader.cpp
 )
 
 target_compile_definitions(Grace_Software_Rasterizer

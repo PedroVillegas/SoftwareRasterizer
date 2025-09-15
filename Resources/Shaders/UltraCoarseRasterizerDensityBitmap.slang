@@ -14,36 +14,45 @@
 [[vk::push_constant]]
 GraphicsPipelinePushConstants PushConst;
 
-groupshared uint[64] smemDensityBitmap;
+groupshared uint[MAX_DENSITY_BITMAP_BLOCK_COUNT] smemDensityBitmap;
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
+[numthreads(32, 1, 1)]
 void main(uint3 globalThreadId : SV_DispatchThreadID,
           uint3 workgroupId : SV_GroupID,
           uint3 localThreadId : SV_GroupThreadID)
 {
-    if (localThreadId.x >= MAX_DENSITY_BITMAP_BLOCK_COUNT) return;
+    if (localThreadId.x >= 32) return;
 
     const uint binOffset = workgroupId.x;
     const uint offsetToDensityBitmaps = binOffset * BIN_DATA_STRIDE;
     const uint offsetToPrimitiveBitmaps = offsetToDensityBitmaps + MAX_DENSITY_BITMAP_BLOCK_COUNT;
 
-    smemDensityBitmap[localThreadId.x] = 0;
+    if (localThreadId.x < MAX_DENSITY_BITMAP_BLOCK_COUNT)
+    {
+        smemDensityBitmap[localThreadId.x] = 0;
+    }
 
     GroupMemoryBarrierWithGroupSync();
 
-    const uint d = MAX_PRIMITIVE_BITMAP_BLOCK_COUNT >> 5;
-    for (uint i = 0; i < d; ++i)
+    for (uint i = 0; i < MAX_DENSITY_BITMAP_BLOCK_COUNT; ++i)
     {
-        const uint primitiveBitmapBlock = PushConst.binningRasterizerBuffer[offsetToPrimitiveBitmaps + (localThreadId.x * 32)];
-
-        if (primitiveBitmapBlock != 0)
+        for (uint j = 0; j < 32; ++j)
         {
-            smemDensityBitmap[localThreadId.x] |= 1 << (32 - d);
+            const uint offset = offsetToPrimitiveBitmaps + (i << 10) + (j << 5) + localThreadId.x;
+            const uint primitiveBitmapBlock = PushConst.binningRasterizerBuffer[offset];
+
+            if (primitiveBitmapBlock != 0)
+            {
+                smemDensityBitmap[i] |= 1 << j;
+            }
         }
     }
 
     GroupMemoryBarrierWithGroupSync();
 
-    PushConst.binningRasterizerBuffer[offsetToDensityBitmaps + localThreadId.x] = smemDensityBitmap[localThreadId.x];
+    if (localThreadId.x < MAX_DENSITY_BITMAP_BLOCK_COUNT)
+    {
+        PushConst.binningRasterizerBuffer[offsetToDensityBitmaps + localThreadId.x] = smemDensityBitmap[localThreadId.x];
+    }
 }

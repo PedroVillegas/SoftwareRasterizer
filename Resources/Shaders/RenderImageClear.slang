@@ -1,7 +1,4 @@
-#define STORAGE_IMAGE_BINDING 0
-
-[[vk::binding(STORAGE_IMAGE_BINDING, 0)]]
-__DynamicResource uStorageTextures[];
+#include "Shared.slang"
 
 struct PC
 {
@@ -21,14 +18,23 @@ void main(uint2 id : SV_DispatchThreadID)
     uint2 renderDims;
     renderTexture.GetDimensions(renderDims.x, renderDims.y);
 
-    if (id.x >= renderDims.x || id.y >= renderDims.y) return;
+    if (any(id >= renderDims)) return;
 
     float2 uv = float2(id) / renderDims;
 
     float3 c = float3(uv, 0.5);
 
-    //renderTexture[id] = float4(pow(c, float3(1.0 / 2.2)), 1.0);
     renderTexture[id] = float4(1.0, 1.0, 1.0, 1.0);
+
+    if (id.x > 0 && (id.x & (uLongLifeGlobals.ultraCoarseRasterTileSize - 1)) == 0)
+    {
+        renderTexture[id] = float4(0.0, 0.0, 0.0, 1.0);
+    }
+
+    if (id.y > 0 && (id.y & (uLongLifeGlobals.ultraCoarseRasterTileSize - 1)) == 0)
+    {
+        renderTexture[id] = float4(0.0, 0.0, 0.0, 1.0);
+    }
 
     RWTexture2D<float> depthTexture = uStorageTextures[PushConst.depthImgId];
     depthTexture[id] = 1.0;

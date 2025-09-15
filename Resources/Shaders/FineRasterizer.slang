@@ -34,6 +34,18 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
 
     GroupMemoryBarrierWithGroupSync();
 
+    // if (all(mappedWorkgroupId == uint2(0, 0)) && linearLocalThreadId < 1)
+    // {
+    //     printf("(Thread-%u) PrimitiveBitmapBlock = %u\n", linearLocalThreadId, PushConst.binningRasterizerBuffer[offsetToPrimitiveBitmaps + linearLocalThreadId]);
+    // }
+
+#if 0
+    for (uint densityBitmapBlockIndex = 0; densityBitmapBlockIndex < MAX_DENSITY_BITMAP_BLOCK_COUNT; densityBitmapBlockIndex++)
+    {
+        uint densityBitmapBlock = smemDensityBitmapBlocks[densityBitmapBlockIndex];
+        uint i = countbits(densityBitmapBlock);
+    }
+#elif
     for (uint densityBitmapBlockIndex = 0; densityBitmapBlockIndex < MAX_DENSITY_BITMAP_BLOCK_COUNT; ++densityBitmapBlockIndex)
     {
         uint densityBitmapBlock = smemDensityBitmapBlocks[densityBitmapBlockIndex];
@@ -50,43 +62,63 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
             {
                 uint primBitmap = PushConst.binningRasterizerBuffer[offsetToPrimitiveBitmaps + primitiveBitmapBlockIndex];
                 // Iterate over each bit of primBitmap
+                uint primBitmapBitCount = countbits(primBitmap);
                 for (uint primitiveBitmapBlockBit = 0; primitiveBitmapBlockBit < 32; ++primitiveBitmapBlockBit)
                 {
                     const uint pbbBit = 1 << primitiveBitmapBlockBit;
                     if ((primBitmap & pbbBit) == 0) continue;
 
-                    const uint triangleBeginIndex = 3 * ((densityBitmapBlockBit << 5) + primitiveBitmapBlockBit);
-                    int2 vtxPosRasterSpace_0 = PushConst.compactedIntrinsicDataBuffer[triangleBeginIndex].position.xy;
-                    int2 vtxPosRasterSpace_1 = PushConst.compactedIntrinsicDataBuffer[triangleBeginIndex + 1].position.xy;
-                    int2 vtxPosRasterSpace_2 = PushConst.compactedIntrinsicDataBuffer[triangleBeginIndex + 2].position.xy;
+                    const uint triangleId = (densityBitmapBlockIndex << 10) + (densityBitmapBlockBit << 5) + (primitiveBitmapBlockIndex << 5) + primitiveBitmapBlockBit;
+                    const uint firstVertex = 3 * triangleId;
+
+                    int2 vtxPosRasterSpace_0 = PushConst.compactedIntrinsicDataBuffer[firstVertex].position.xy;
+                    int2 vtxPosRasterSpace_1 = PushConst.compactedIntrinsicDataBuffer[firstVertex + 1].position.xy;
+                    int2 vtxPosRasterSpace_2 = PushConst.compactedIntrinsicDataBuffer[firstVertex + 2].position.xy;
+
+                    // if (all(mappedWorkgroupId == uint2(0, 0)) && linearLocalThreadId < 1 && firstVertex == 848)
+                    // {
+                    //     printf("(Thread-%u)\nprimBitmapBitCount = %u\nfirstVertex = %u\ndensityBitmapBlockBit = %u\nprimBitmapBlockBit = %u\n",
+                    //     linearLocalThreadId, primBitmapBitCount, firstVertex, densityBitmapBlockBit, primitiveBitmapBlockBit);
+                    // }
 
                     int2 sampleRasterSpace = globalThreadId.xy - halfFramebuffer;
                     int firstEdgeTest = EdgeFn(vtxPosRasterSpace_0, vtxPosRasterSpace_1, sampleRasterSpace);
                     int secondEdgeTest = EdgeFn(vtxPosRasterSpace_1, vtxPosRasterSpace_2, sampleRasterSpace);
                     int thirdEdgeTest = EdgeFn(vtxPosRasterSpace_2, vtxPosRasterSpace_0, sampleRasterSpace);
 
-                    // DEBUG:
-                    // renderTexture[uint2(10)] = float4(1.0);
-                    // renderTexture[uint2(10, 11)] = float4(1.0);
-                    // renderTexture[uint2(11, 10)] = float4(1.0);
-                    // renderTexture[uint2(11)] = float4(1.0);
-
                     if ( (firstEdgeTest >= 0 && secondEdgeTest >= 0 && thirdEdgeTest >= 0)
                       || (firstEdgeTest < 0 && secondEdgeTest < 0 && thirdEdgeTest < 0)
                     )
                     {
-                        renderTexture[globalThreadId.xy] = float4(FillPixel(PushConst.compactedIntrinsicDataBuffer[triangleBeginIndex].position.w), 1.0);
+                        renderTexture[globalThreadId.xy] = float4(FillPixel(PushConst.compactedIntrinsicDataBuffer[firstVertex].position.w), 1.0);
                     }
+
+                    // if (all(mappedWorkgroupId == uint2(0, 0)))
+                    // {
+                    //     // DEBUG:
+                    //     renderTexture[uint2(10)] = float4(0.0, 0.0, 0.0, 1.0);
+                    //     renderTexture[uint2(10, 11)] = float4(0.0, 0.0, 0.0, 1.0);
+                    //     renderTexture[uint2(11, 10)] = float4(0.0, 0.0, 0.0, 1.0);
+                    //     renderTexture[uint2(11)] = float4(0.0, 0.0, 0.0, 1.0);
+                    // }
                 }
             }
         }
     }
+
+    // if (all(mappedWorkgroupId == uint2(0, 0)) && linearLocalThreadId < 1)
+    // {
+    //     printf("(Thread-%u) TrianglesTested = %u\n", linearLocalThreadId, trianglesTested);
+    // }
+#endif
 }
 
 float3 FillPixel(uint id)
 {
     uint hashed = hash(id);
     float3 o = float3(float(hashed & 255U), float((hashed >> 8) & 255U), float((hashed >> 16) & 255U)) / 255.0;
+    return pow(o, float3(1.0 / 2.2));
+
     // o.x = o.x * 0.4 + 0.6;
     // o.y = o.y * 0.1 + 0.05;
     // o.z = o.z * 0.05 + 0.04;

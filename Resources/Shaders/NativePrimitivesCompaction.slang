@@ -8,12 +8,12 @@ struct PredEvalFn : StreamCompactionPredicateEvaluationFn
 
     bool EvaluatePredicate(const PRED_TYPE item)
     {
-        return item != float(CULLED_VERTEX);
+        return (item != float(CULLED_VERTEX)) && (item != 0.0);
     }
 
     PRED_TYPE GetPredicateElement(BUFFER_ELEM_TYPE* src, const uint index)
     {
-        return src[index].position.x;
+        return src[index].position.z;
     }
 }
 
