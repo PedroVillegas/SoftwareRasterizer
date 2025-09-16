@@ -11,27 +11,23 @@ __DynamicResource uStorageTextures[];
 
 struct HomogeneousPosition
 {
-    float4 p;
-};
-
-struct GraphicsPipelineIntrinsicData
-{
     float4 position;
 };
 
-struct GraphicsPipelineMetaData
+struct GraphicsPipelineMetadata
 {
-    uint compactedIntrinsicDataBufferSize;
-    uint clipperEmittedVerticesCount;
-    uint validClipperEmittedTrianglesCount;
+    uint compactTriangleBufferSize;
+    uint clipperEmittedTrianglesCount;
 };
 
 struct GraphicsPipelinePushConstants
 {
-    uint* binningRasterizerBuffer;
-    GraphicsPipelineIntrinsicData* intrinsicDataBuffer;
-    GraphicsPipelineIntrinsicData* compactedIntrinsicDataBuffer;
-    GraphicsPipelineMetaData* metaDataBuffer;
+    uint* tileDataBuffer;
+    uint* indexBuffer;
+    HomogeneousPosition* homogeneousPositionBuffer;
+    TriangleIndexed* sparseTriangleBuffer;
+    TriangleIndexed* compactTriangleBuffer;
+    GraphicsPipelineMetadata* metadataBuffer;
     uint triangleCount;
     uint verticesCount;
     uint renderImgId;
@@ -59,7 +55,7 @@ static const uint MAX_PRIMITIVE_BITMAP_BLOCK_COUNT = 1024;
 static const uint MAX_DENSITY_BITMAP_BLOCK_COUNT = 1;
 static const uint BIN_DATA_STRIDE = MAX_DENSITY_BITMAP_BLOCK_COUNT * (1 + MAX_PRIMITIVE_BITMAP_BLOCK_COUNT);
 
-static const int CULLED_VERTEX = 0x7FFFFFFF; // Max int32_t
+static const uint CULLED_VERTEX = 0xFFFFFFFF; // Max uint32_t
 
 struct Vertex
 {

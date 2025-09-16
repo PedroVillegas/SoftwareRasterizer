@@ -6,12 +6,19 @@
 [[vk::push_constant]]
 GraphicsPipelinePushConstants PushConst;
 
-#define BACKFACE_CULLING 1
-#define PUSH_ALL_TRIANGLES 1
+#define ENABLE_BACKFACE_CULLING 1
+#define ENABLE_CLIPPING 1
+#define PUSH_ALL_TRIANGLES 0
 
 static const float NEAR_PLANE = 0.01;
 static const Region2D GUARDBAND_CLIP_REGION_RASTER_SPACE = Region2D(-(1 << 14), 1 << 14);
 // static const Region2D GUARDBAND_CLIP_REGION = Region2D(int2(-200, -100), int2(200, 100));
+
+struct ProcessedTriangle
+{
+    Triangle triangle;
+    bool culled;
+};
 
 [shader("compute")]
 [numthreads(256, 1, 1)]
@@ -24,20 +31,26 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
     uint triangleBeginOffset = globalThreadId.x * 3;
 
     // Fetch triangle
-    float4 vtxPosClipSpace_0 = PushConst.intrinsicDataBuffer[triangleBeginOffset].position;
-    float4 vtxPosClipSpace_1 = PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position;
-    float4 vtxPosClipSpace_2 = PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position;
+    uint i0 = PushConst.indexBuffer[triangleBeginOffset];
+    uint i1 = PushConst.indexBuffer[triangleBeginOffset + 1];
+    uint i2 = PushConst.indexBuffer[triangleBeginOffset + 2];
+
+    float4 vtxPosClipSpace_0 = PushConst.homogeneousPositionBuffer[i0].position;
+    float4 vtxPosClipSpace_1 = PushConst.homogeneousPositionBuffer[i1].position;
+    float4 vtxPosClipSpace_2 = PushConst.homogeneousPositionBuffer[i2].position;
 
 #if PUSH_ALL_TRIANGLES
-    Triangle processed = ProcessPrimitive(vtxPosClipSpace_0, vtxPosClipSpace_1, vtxPosClipSpace_2);
+    ProcessedTriangle processed = ProcessPrimitive(vtxPosClipSpace_0, vtxPosClipSpace_1, vtxPosClipSpace_2);
 
-    // PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(vtxPosRasterSpace_0, 0.0, 0.0);
-    // PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(vtxPosRasterSpace_1, 0.0, 0.0);
-    // PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(vtxPosRasterSpace_2, 0.0, 0.0);
+    // PushConst.homogeneousPositionBuffer[i0].position = float4(vtxPosRasterSpace_0, 0.0, 0.0);
+    // PushConst.homogeneousPositionBuffer[i1].position = float4(vtxPosRasterSpace_1, 0.0, 0.0);
+    // PushConst.homogeneousPositionBuffer[i2].position = float4(vtxPosRasterSpace_2, 0.0, 0.0);
 
-    PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(processed.v0, 1.0, triangleBeginOffset);
-    PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(processed.v1, 1.0, 0.0);
-    PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(processed.v2, 1.0, 0.0);
+    PushConst.homogeneousPositionBuffer[i0].position = float4(processed.triangle.v0, 1.0, triangleBeginOffset);
+    PushConst.homogeneousPositionBuffer[i1].position = float4(processed.triangle.v1, 1.0, triangleBeginOffset);
+    PushConst.homogeneousPositionBuffer[i2].position = float4(processed.triangle.v2, 1.0, triangleBeginOffset);
+
+    PushConst.sparseTriangleBuffer[globalThreadId.x] = TriangleIndexed(i0, i1, i2);
     return;
 #endif
 
@@ -69,9 +82,10 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
     )
     {
         // printf("TRIVIAL REJECT\n");
-        PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(float2(CULLED_VERTEX), 1.0, triangleBeginOffset);
-        PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(float2(CULLED_VERTEX), 1.0, 0.0);
-        PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(float2(CULLED_VERTEX), 1.0, 0.0);
+        // PushConst.homogeneousPositionBuffer[i0].position = float4(float2(CULLED_VERTEX), 1.0, i0);
+        // PushConst.homogeneousPositionBuffer[i1].position = float4(float2(CULLED_VERTEX), 1.0, 0.0);
+        // PushConst.homogeneousPositionBuffer[i2].position = float4(float2(CULLED_VERTEX), 1.0, 0.0);
+        PushConst.sparseTriangleBuffer[globalThreadId.x] = TriangleIndexed(CULLED_VERTEX, CULLED_VERTEX, CULLED_VERTEX);
         return;
     }
 
@@ -103,21 +117,29 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
     )
     {
         // printf("TRIVIAL ACCEPT\n");
-        Triangle processed = ProcessPrimitive(vtxPosClipSpace_0, vtxPosClipSpace_1, vtxPosClipSpace_2);
+        ProcessedTriangle processed = ProcessPrimitive(vtxPosClipSpace_0, vtxPosClipSpace_1, vtxPosClipSpace_2);
 
-        // PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(vtxPosRasterSpace_0, 0.0, 0.0);
-        // PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(vtxPosRasterSpace_1, 0.0, 0.0);
-        // PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(vtxPosRasterSpace_2, 0.0, 0.0);
+        // PushConst.homogeneousPositionBuffer[i0].position = float4(vtxPosRasterSpace_0, 0.0, 0.0);
+        // PushConst.homogeneousPositionBuffer[i1].position = float4(vtxPosRasterSpace_1, 0.0, 0.0);
+        // PushConst.homogeneousPositionBuffer[i2].position = float4(vtxPosRasterSpace_2, 0.0, 0.0);
 
-        PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(processed.v0, 1.0, triangleBeginOffset);
-        PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(processed.v1, 1.0, 0.0);
-        PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(processed.v2, 1.0, 0.0);
+        if (processed.culled)
+        {
+            PushConst.sparseTriangleBuffer[globalThreadId.x] = TriangleIndexed(CULLED_VERTEX, CULLED_VERTEX, CULLED_VERTEX);
+            return;
+        }
+
+        PushConst.homogeneousPositionBuffer[i0].position = float4(processed.triangle.v0, 1.0, triangleBeginOffset);
+        PushConst.homogeneousPositionBuffer[i1].position = float4(processed.triangle.v1, 1.0, triangleBeginOffset);
+        PushConst.homogeneousPositionBuffer[i2].position = float4(processed.triangle.v2, 1.0, triangleBeginOffset);
+        PushConst.sparseTriangleBuffer[globalThreadId.x] = TriangleIndexed(i0, i1, i2);
         return;
     }
 
-    // PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(float2(CULLED_VERTEX), -2.0, triangleBeginOffset);
-    // PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
-    // PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
+#if ENABLE_CLIPPING
+    // PushConst.homogeneousPositionBuffer[i0].position = float4(float2(CULLED_VERTEX), -2.0, i0);
+    // PushConst.homogeneousPositionBuffer[i1].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
+    // PushConst.homogeneousPositionBuffer[i2].position = float4(float2(CULLED_VERTEX), 0.0, 0.0);
     // return;
 
     // Clip before homogeneous divide!
@@ -131,9 +153,10 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
 
     // if (globalThreadId.x == 0) printf("clipped\n");
 
-    PushConst.intrinsicDataBuffer[triangleBeginOffset].position = float4(float2(CULLED_VERTEX), 1.0, triangleBeginOffset);
-    PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = float4(float2(CULLED_VERTEX), 1.0, 0.0);
-    PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = float4(float2(CULLED_VERTEX), 1.0, 0.0);
+    // PushConst.homogeneousPositionBuffer[i0].position = float4(float2(CULLED_VERTEX), 1.0, i0);
+    // PushConst.homogeneousPositionBuffer[i1].position = float4(float2(CULLED_VERTEX), 1.0, 0.0);
+    // PushConst.homogeneousPositionBuffer[i2].position = float4(float2(CULLED_VERTEX), 1.0, 0.0);
+    PushConst.sparseTriangleBuffer[globalThreadId.x] = TriangleIndexed(CULLED_VERTEX, CULLED_VERTEX, CULLED_VERTEX);
 
     // There are few cases where a primitive may be fully outside the clip volume
     // but, not all vertices are outside a single clip plane so it slips past
@@ -144,35 +167,38 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
         return;
     }
 
-    uint orig;
-    InterlockedAdd(PushConst.metaDataBuffer[0].clipperEmittedVerticesCount, 3 * (clipped.vertexCount - 2), orig);
+    // # of new triangles = clipper.vertexCount - 2
+    uint clipperEmittedTrianglesCount;
+    InterlockedAdd(PushConst.metadataBuffer[0].clipperEmittedTrianglesCount, clipped.vertexCount - 2, clipperEmittedTrianglesCount);
 
-    // printf("[START]\n");
+    if ((clipperEmittedTrianglesCount + clipped.vertexCount - 2) >= 4096)
+    {
+        printf("MAX CLIPPER EMITTED TRIANGLES REACHED\n");
+        return;
+    }
 
     for (uint i = 0; i < clipped.vertexCount - 2; i++)
     {
-        // printf("\n[Thread-%u] Pre-processed\n%f, %f, %f, %f\n%f, %f, %f, %f\n%f, %f, %f, %f\n", globalThreadId.x,
-        //         clipped.vertices[0].x, clipped.vertices[0].y, clipped.vertices[0].z, clipped.vertices[0].w,
-        //         clipped.vertices[i+1].x, clipped.vertices[i+1].y, clipped.vertices[i+1].z, clipped.vertices[i+1].w,
-        //         clipped.vertices[i+2].x, clipped.vertices[i+2].y, clipped.vertices[i+2].z, clipped.vertices[i+2].w);
+        ProcessedTriangle processed = ProcessPrimitive(clipped.vertices[0], clipped.vertices[i + 1], clipped.vertices[i + 2]);
 
-        Triangle processed = ProcessPrimitive(clipped.vertices[0], clipped.vertices[i + 1], clipped.vertices[i + 2]);
+        uint sparseTriangleBufferOffset = uLongLifeGlobals.clipperEmittedVerticesOffset + clipperEmittedTrianglesCount + i;
+        if (processed.culled)
+        {
+            PushConst.sparseTriangleBuffer[sparseTriangleBufferOffset] = TriangleIndexed(CULLED_VERTEX, CULLED_VERTEX, CULLED_VERTEX);
+            continue;
+        }
 
-        uint offset = uLongLifeGlobals.clipperEmittedVerticesOffset + orig + (i * 3);
-        PushConst.intrinsicDataBuffer[offset].position = float4(processed.v0, 1.0, triangleBeginOffset /* + i */);
-        PushConst.intrinsicDataBuffer[offset + 1].position = float4(processed.v1, 1.0, 0.0);
-        PushConst.intrinsicDataBuffer[offset + 2].position = float4(processed.v2, 1.0, 0.0);
-
-        // printf("\n[Thread-%u] Processed\n%i, %i\n%i, %i\n%i, %i\n", globalThreadId.x,
-        //         processed.v0.x, processed.v0.y,
-        //         processed.v1.x, processed.v1.y,
-        //         processed.v2.x, processed.v1.y);
+        uint clippedPolygonVertexOffset = 3 * (clipperEmittedTrianglesCount + i);
+        uint vertexPositionBufferOffset = uLongLifeGlobals.clipperEmittedVerticesOffset + clippedPolygonVertexOffset;
+        PushConst.homogeneousPositionBuffer[vertexPositionBufferOffset].position = float4(processed.triangle.v0, 1.0, triangleBeginOffset /* + i */);
+        PushConst.homogeneousPositionBuffer[vertexPositionBufferOffset + 1].position = float4(processed.triangle.v1, 1.0, triangleBeginOffset);
+        PushConst.homogeneousPositionBuffer[vertexPositionBufferOffset + 2].position = float4(processed.triangle.v2, 1.0, triangleBeginOffset);
+        PushConst.sparseTriangleBuffer[sparseTriangleBufferOffset] = TriangleIndexed(vertexPositionBufferOffset, vertexPositionBufferOffset + 1, vertexPositionBufferOffset + 2);
     }
-
-    // printf("[END]\n");
+    #endif
 }
 
-Triangle ProcessPrimitive(float4 vtxPosClipSpace_0, float4 vtxPosClipSpace_1, float4 vtxPosClipSpace_2)
+ProcessedTriangle ProcessPrimitive(float4 vtxPosClipSpace_0, float4 vtxPosClipSpace_1, float4 vtxPosClipSpace_2)
 {
     // Homogeneous divide (normalising projected view volume to canonical view / normalised device coordinates)
     // Canonical view volume / NDC: -1 <= X <= 1, -1 <= Y <= 1, 0 <= Z <= 1
@@ -188,9 +214,9 @@ Triangle ProcessPrimitive(float4 vtxPosClipSpace_0, float4 vtxPosClipSpace_1, fl
     int2 halfFramebuffer = int2(uLongLifeGlobals.framebufferSize * float2(0.5));
 
     // Debug:
-    // PushConst.intrinsicDataBuffer[triangleBeginOffset].position = vtxPosNdcSpace_0;
-    // PushConst.intrinsicDataBuffer[triangleBeginOffset + 1].position = vtxPosNdcSpace_1;
-    // PushConst.intrinsicDataBuffer[triangleBeginOffset + 2].position = vtxPosNdcSpace_2;
+    // PushConst.homogeneousPositionBuffer[i0].position = vtxPosNdcSpace_0;
+    // PushConst.homogeneousPositionBuffer[i1].position = vtxPosNdcSpace_1;
+    // PushConst.homogeneousPositionBuffer[i2].position = vtxPosNdcSpace_2;
 
     int2 vtxPosRasterSpace_0 = int2(vtxPosNdcSpace_0.xy * halfFramebuffer);
     int2 vtxPosRasterSpace_1 = int2(vtxPosNdcSpace_1.xy * halfFramebuffer);
@@ -199,33 +225,25 @@ Triangle ProcessPrimitive(float4 vtxPosClipSpace_0, float4 vtxPosClipSpace_1, fl
     Triangle triangle = Triangle(vtxPosRasterSpace_0, vtxPosRasterSpace_1, vtxPosRasterSpace_2);
 
 #if PUSH_ALL_TRIANGLES
-    return triangle;
+    return ProcessedTriangle(triangle, false);
 #endif
 
     // Cull triangles with no area
     int area = triangle.SignedArea();
     if (area == 0)
     {
-        return Triangle(
-            int2(CULLED_VERTEX),
-            int2(CULLED_VERTEX),
-            int2(CULLED_VERTEX),
-        );
+        return ProcessedTriangle(triangle, true);
     }
 
     // Backface culling after homogenous divide is significantly simpler
-#if BACKFACE_CULLING
+#if ENABLE_BACKFACE_CULLING
     if (area > 0)
     {
-        return Triangle(
-            int2(CULLED_VERTEX),
-            int2(CULLED_VERTEX),
-            int2(CULLED_VERTEX),
-        );
+        return ProcessedTriangle(triangle, true);
     }
 #endif
 
-    return triangle;
+    return ProcessedTriangle(triangle, false);
 }
 
 struct Triangle3D

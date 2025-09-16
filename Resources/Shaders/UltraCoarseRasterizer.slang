@@ -22,8 +22,7 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
           uint3 workgroupId : SV_GroupID,
           uint3 localThreadId : SV_GroupThreadID)
 {
-    const uint intrinsicDataBufferSize = PushConst.metaDataBuffer[0].compactedIntrinsicDataBufferSize;
-    uint triangleCount = intrinsicDataBufferSize / 3;
+    const uint triangleCount = PushConst.metadataBuffer[0].compactTriangleBufferSize;
     smemPerBinPrimitiveCounter = 0;
     smemTrianglesProcessed = 0;
 
@@ -42,14 +41,15 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
     {
         uint orig;
         InterlockedAdd(smemTrianglesProcessed, 1, orig);
-        uint triangleBeginOffset = orig * 3;
 
-        if (triangleBeginOffset + 2 >= intrinsicDataBufferSize) break;
+        if (orig >= triangleCount) break;
 
         // Fetch triangle
-        int2 vtxPosRasterSpace_0 = PushConst.compactedIntrinsicDataBuffer[triangleBeginOffset].position.xy;
-        int2 vtxPosRasterSpace_1 = PushConst.compactedIntrinsicDataBuffer[triangleBeginOffset + 1].position.xy;
-        int2 vtxPosRasterSpace_2 = PushConst.compactedIntrinsicDataBuffer[triangleBeginOffset + 2].position.xy;
+        TriangleIndexed triangleIndexed = PushConst.compactTriangleBuffer[orig];
+
+        int2 vtxPosRasterSpace_0 = PushConst.homogeneousPositionBuffer[triangleIndexed.i0].position.xy;
+        int2 vtxPosRasterSpace_1 = PushConst.homogeneousPositionBuffer[triangleIndexed.i1].position.xy;
+        int2 vtxPosRasterSpace_2 = PushConst.homogeneousPositionBuffer[triangleIndexed.i2].position.xy;
 
         Triangle triangle = Triangle(vtxPosRasterSpace_0, vtxPosRasterSpace_1, vtxPosRasterSpace_2);
 
@@ -78,5 +78,5 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
     const uint binOffset = (workgroupId.y * uLongLifeGlobals.ultraCoarseRasterDispatchSize.x) + workgroupId.x;
     const uint offsetToDensityBitmaps = binOffset * BIN_DATA_STRIDE;
     const uint offsetToPrimitiveBitmaps = offsetToDensityBitmaps + MAX_DENSITY_BITMAP_BLOCK_COUNT;
-    PushConst.binningRasterizerBuffer[offsetToPrimitiveBitmaps + linearLocalThreadId] = smemPrimitiveBitmapBlocks[linearLocalThreadId];
+    PushConst.tileDataBuffer[offsetToPrimitiveBitmaps + linearLocalThreadId] = smemPrimitiveBitmapBlocks[linearLocalThreadId];
 }

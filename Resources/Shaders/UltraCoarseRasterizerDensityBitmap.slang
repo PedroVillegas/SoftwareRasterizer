@@ -40,7 +40,7 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
         for (uint j = 0; j < 32; ++j)
         {
             const uint offset = offsetToPrimitiveBitmaps + (i << 10) + (j << 5) + localThreadId.x;
-            const uint primitiveBitmapBlock = PushConst.binningRasterizerBuffer[offset];
+            const uint primitiveBitmapBlock = PushConst.tileDataBuffer[offset];
 
             if (primitiveBitmapBlock != 0)
             {
@@ -53,6 +53,6 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
 
     if (localThreadId.x < MAX_DENSITY_BITMAP_BLOCK_COUNT)
     {
-        PushConst.binningRasterizerBuffer[offsetToDensityBitmaps + localThreadId.x] = smemDensityBitmap[localThreadId.x];
+        PushConst.tileDataBuffer[offsetToDensityBitmaps + localThreadId.x] = smemDensityBitmap[localThreadId.x];
     }
 }

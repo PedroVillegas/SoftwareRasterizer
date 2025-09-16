@@ -30,6 +30,7 @@ void StreamCompactionNonOrderPreserving(const uint globalThreadId, ELEM_TYPE* sr
     if (globalThreadId >= (max(srcSize, 1024) >> 10) << 7) return;
 
     if (globalThreadId == 0) smemInterWaveOffset = 0;
+    uint globalDstOffset = globalMemDstSize;
     GroupMemoryBarrierWithGroupSync();
 
     uint waveSize = 64;
@@ -89,12 +90,7 @@ void StreamCompactionNonOrderPreserving(const uint globalThreadId, ELEM_TYPE* sr
         InterlockedAdd(globalMemDstSize, count, dstBufferOffset);
         // printf("dstBufferOffset: %u, count: %u\n", dstBufferOffset, count);
     }
-    dstBufferOffset = 0; //WaveReadLaneAt(dstBufferOffset, 15);
-
-    if (warpId == 0 && laneId == 15)
-    {
-        printf("dstBufferOffset: %u, interWaveOffset: %u, count: %u\n", dstBufferOffset, interWaveOffset, count);
-    }
+    dstBufferOffset = globalDstOffset;
 
     for (uint i = 0; i < 16; i++)
     {

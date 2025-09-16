@@ -31,16 +31,20 @@ struct LongLifetimeGlobalVars
     uint32_t clipperEmittedVerticesOffset;
 };
 
-struct GraphicsPipelineMetaData
+struct GraphicsPipelineMetadata
 {
-    uint32_t compactedIntrinsicDataBufferSize;
-    uint32_t clipperEmittedVerticesCount;
-    uint32_t validClipperEmittedTrianglesCount;
+    uint32_t compactTriangleBufferSize;
+    uint32_t clipperEmittedTrianglesCount;
 };
 
-struct GraphicsPipelineIntrinsicData
+struct TriangleIndexed
 {
-    glm::vec4 homogeneousPosition;
+    uint32_t i0, i1, i2;
+};
+
+struct HomogeneousPosition
+{
+    glm::vec4 p;
 };
 
 struct FrameData
@@ -74,12 +78,14 @@ int main()
     constexpr uint32_t coarseRasterizerTileSize = 16;
     constexpr uint32_t binningRasterizerTileCount = 16; // count x count tiles in a single bin
     constexpr uint32_t binningRasterizerBinSize = 256;  // coarseRasterizerTileSize * binningRasterizerTileCount;
-    constexpr uint32_t maxTrianglesEmittedByClipper = 4096;
     const uint32_t binningRasterizerTotalBinCount =
         glm::ceil(static_cast<float>(maxResolutionWidth) / binningRasterizerBinSize)
         * glm::ceil(static_cast<float>(maxResolutionHeight) / binningRasterizerBinSize);
     const size_t binningRasterizerBufferSize =
         binningRasterizerTotalBinCount * sizeof(uint32_t) * (densityBitmapBlockCount * (1 + primitiveBitmapBlockCount));
+
+    constexpr uint32_t maxVerticesCount = 3'000'000;
+    constexpr uint32_t maxClipperEmittedTrianglesCount = 4096;
 
     uint32_t previousVertexCount = 0;
 
@@ -94,7 +100,7 @@ int main()
                                       glm::floor(static_cast<float>(windowHeight) / 64) + 1 },
         .fineRasterDispatchSize = { glm::floor(static_cast<float>(windowWidth) / 16) + 1,
                                     glm::floor(static_cast<float>(windowHeight) / 16) + 1 },
-        .clipperEmittedVerticesOffset = 12'500'000 - 4096,
+        .clipperEmittedVerticesOffset = maxVerticesCount - maxClipperEmittedTrianglesCount,
     };
 
     glfwInit();
@@ -162,30 +168,39 @@ int main()
         .data = nullptr,
     });
 
-    const Grace::BufferHandle metaDataBuffer = pDevice->CreateBuffer({
-        .name = "GSR::metaDataBuffer",
+    const Grace::BufferHandle metadataBuffer = pDevice->CreateBuffer({
+        .name = "GSR::metadataBuffer",
         .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
                | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         .allocFlags = 0,
-        .size = sizeof(GraphicsPipelineMetaData),
+        .size = sizeof(GraphicsPipelineMetadata),
         .data = nullptr,
     });
 
-    const Grace::BufferHandle graphicsPipelineInstrinsicDataBuffer = pDevice->CreateBuffer({
-        .name = "GSR::graphicsPipelineInstrinsicDataBuffer",
+    const Grace::BufferHandle homogeneousPositionBuffer = pDevice->CreateBuffer({
+        .name = "GSR::homogeneousPositionBuffer",
         .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
                | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         .allocFlags = 0,
-        .size = 12'500'000 * sizeof(GraphicsPipelineIntrinsicData), // 200MB
+        .size = maxVerticesCount * sizeof(HomogeneousPosition),
         .data = nullptr,
     });
 
-    const Grace::BufferHandle compactedInstrinsicDataBuffer = pDevice->CreateBuffer({
-        .name = "GSR::compactedInstrinsicDataBuffer",
+    const Grace::BufferHandle sparseTriangleBuffer = pDevice->CreateBuffer({
+        .name = "GSR::sparseTriangleBuffer",
         .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
                | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         .allocFlags = 0,
-        .size = 12'500'000 * sizeof(GraphicsPipelineIntrinsicData), // 200MB
+        .size = maxVerticesCount * sizeof(TriangleIndexed),
+        .data = nullptr,
+    });
+
+    const Grace::BufferHandle compactTriangleBuffer = pDevice->CreateBuffer({
+        .name = "GSR::compactTriangleBuffer",
+        .usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+               | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .allocFlags = 0,
+        .size = maxVerticesCount * sizeof(TriangleIndexed),
         .data = nullptr,
     });
 
@@ -261,9 +276,15 @@ int main()
     const Grace::PipelineHandle clipperEmittedPrimitivesCompactionPipeline =
         pDevice->CreatePipeline(pbuilder.pipelineDesc);
 
-    // std::optional<Scene> testScene = LoadGltf(RESOURCES_PATH "Models/damaged-helmet/damagedHelmet.gltf");
+    pbuilder.ClearShaders();
+    pbuilder.AddShader("PostProcessing.slang.spv", VK_SHADER_STAGE_COMPUTE_BIT);
+    pbuilder.BuildComputePipeline("GSR::postProcessingPipeline", pDevice->GetSolePipelineLayout());
+    const Grace::PipelineHandle postProcessingPipeline = pDevice->CreatePipeline(pbuilder.pipelineDesc);
+
+    std::optional<Scene> testScene = LoadGltf(RESOURCES_PATH "Models/damaged-helmet/damagedHelmet.gltf");
     // std::optional<Scene> testScene = LoadGltf(RESOURCES_PATH "Models/Key.glb");
-    std::optional<Scene> testScene = LoadGltf(RESOURCES_PATH "Models/Rock.glb");
+    // std::optional<Scene> testScene = LoadGltf(RESOURCES_PATH "Models/Rock.glb");
+    // std::optional<Scene> testScene = LoadGltf(RESOURCES_PATH "Models/unit_cube.glb");
     assert(testScene.has_value());
 
     const Grace::BufferHandle vertexBuffer = pDevice->CreateBuffer({
@@ -286,13 +307,14 @@ int main()
 
     // MVP
     Camera cam = {};
-    // cam.position = { 1.5F, 1.5F, -3.0F };
-    // cam.rotation = { -25.0F, 25.0F, 0.0F };
-    cam.position = { -5.53F, 4.01F, 43.21F };
-    cam.rotation = { -20.35F, 331.95F, 0.0F };
+    // cam.position = { 2.0F, 2.0F, -2.0F };
+    cam.position = { 5.651F, 1.691F, -0.363F };
+    cam.rotation = { -25.0F, 25.0F, 0.0F };
+    // cam.position = { -5.53F, 4.01F, 43.21F };
+    // cam.rotation = { -20.35F, 331.95F, 0.0F };
 
-    // glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -6.0f));
-    glm::mat4 model = glm::scale(glm::mat4(1.0f), glm::vec3(100.0F));
+    glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -6.0f));
+    // glm::mat4 model = glm::scale(glm::mat4(1.0f), glm::vec3(100.0F));
     glm::mat4 view = glm::mat4(1.0f);
     glm::mat4 proj = glm::perspectiveFov(
         glm::radians(45.0f), static_cast<float>(windowWidth), static_cast<float>(windowHeight), 0.001F, 1000.0F);
@@ -362,9 +384,10 @@ int main()
         cmd.InsertDebugLabel("Render/Depth Images");
         cmd.Dispatch(glm::ceil(windowWidth / 16.0F), glm::ceil(windowHeight / 16.0F));
 
-        cmd.FillBuffer(metaDataBuffer, 0);
-        cmd.FillBuffer(compactedInstrinsicDataBuffer, 0);
-        cmd.FillBuffer(graphicsPipelineInstrinsicDataBuffer, 0);
+        cmd.FillBuffer(metadataBuffer, 0);
+        cmd.FillBuffer(homogeneousPositionBuffer, 0);
+        cmd.FillBuffer(sparseTriangleBuffer, 0xFFFFFFFF);
+        cmd.FillBuffer(compactTriangleBuffer, 0xFFFFFFFF);
 
         cmd.AddMemoryBarrier({ Grace::AccessType::ClearWrite },
                              { Grace::AccessType::ComputeShaderStorageRead, Grace::AccessType::ClearWrite });
@@ -380,21 +403,21 @@ int main()
             struct PC
             {
                 glm::mat4 mvp;
-                uint64_t intrinsicDataBuffer;
+                uint64_t homogeneousPositionBuffer;
                 uint64_t vertexBuffer;
                 uint64_t indexBuffer;
-                uint32_t indexCount;
+                uint32_t vertexCount;
             } pc;
 
             pc.mvp = mvp;
-            pc.intrinsicDataBuffer = pDevice->GetBuffer(graphicsPipelineInstrinsicDataBuffer).GetBDA();
+            pc.homogeneousPositionBuffer = pDevice->GetBuffer(homogeneousPositionBuffer).GetBDA();
             pc.vertexBuffer = pDevice->GetBuffer(vertexBuffer).GetBDA();
             pc.indexBuffer = pDevice->GetBuffer(indexBuffer).GetBDA();
-            pc.indexCount = testScene.value().indices.size();
+            pc.vertexCount = testScene.value().vertices.size();
             cmd.PushConstants(pDevice->GetSolePipelineLayout(), sizeof(pc), &pc);
         }
 
-        cmd.Dispatch(glm::floor(testScene.value().indices.size() / 256.0F) + 1);
+        cmd.Dispatch(glm::floor(testScene.value().vertices.size() / 256.0F) + 1);
         cmd.EndDebugLabel();
 
         cmd.AddMemoryBarrier({ Grace::AccessType::ComputeShaderWrite },
@@ -404,18 +427,22 @@ int main()
         struct PC
         {
             uint64_t tileDataBuffer;
-            uint64_t intrinsicDataBuffer;
-            uint64_t compactedIntrinsicDataBuffer;
-            uint64_t metaDataBuffer;
+            uint64_t indexBuffer;
+            uint64_t homogeneousPositionBuffer;
+            uint64_t sparseTriangleBuffer;
+            uint64_t compactTriangleBuffer;
+            uint64_t metadataBuffer;
             uint32_t triangleCount;
             uint32_t verticesCount;
             uint32_t renderImgId;
         } pc;
 
         pc.tileDataBuffer = pDevice->GetBuffer(tileDataBuffer).GetBDA();
-        pc.intrinsicDataBuffer = pDevice->GetBuffer(graphicsPipelineInstrinsicDataBuffer).GetBDA();
-        pc.compactedIntrinsicDataBuffer = pDevice->GetBuffer(compactedInstrinsicDataBuffer).GetBDA();
-        pc.metaDataBuffer = pDevice->GetBuffer(metaDataBuffer).GetBDA();
+        pc.indexBuffer = pDevice->GetBuffer(indexBuffer).GetBDA();
+        pc.homogeneousPositionBuffer = pDevice->GetBuffer(homogeneousPositionBuffer).GetBDA();
+        pc.sparseTriangleBuffer = pDevice->GetBuffer(sparseTriangleBuffer).GetBDA();
+        pc.compactTriangleBuffer = pDevice->GetBuffer(compactTriangleBuffer).GetBDA();
+        pc.metadataBuffer = pDevice->GetBuffer(metadataBuffer).GetBDA();
         pc.triangleCount = testScene.value().indices.size() / 3;
         pc.verticesCount = testScene.value().indices.size();
         pc.renderImgId = pDevice->GetImage(renderImg).GetStorageImgId();
@@ -472,6 +499,15 @@ int main()
         cmd.BindPipeline(fineRasterizerPipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
         cmd.Dispatch(longLifetimeGlobalVars.fineRasterDispatchSize.x, longLifetimeGlobalVars.fineRasterDispatchSize.y);
 
+        cmd.EndDebugLabel();
+
+        cmd.AddMemoryBarrier({ Grace::AccessType::ComputeShaderWrite },
+                             { Grace::AccessType::ComputeShaderStorageRead });
+        cmd.PipelineBarrier();
+
+        cmd.BeginDebugLabel("Post Processing");
+        cmd.BindPipeline(postProcessingPipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
+        cmd.Dispatch(glm::floor(windowWidth / 16.0F) + 1, glm::floor(windowHeight / 16.0F) + 1);
         cmd.EndDebugLabel();
 
         cmd.AddMemoryBarrier({ Grace::AccessType::ComputeShaderWrite }, { Grace::AccessType::BlitRead });
@@ -587,7 +623,7 @@ int main()
                                                                 glm::floor(static_cast<float>(windowHeight) / 64) + 1 };
             longLifetimeGlobalVars.fineRasterDispatchSize = { glm::floor(static_cast<float>(windowWidth) / 16) + 1,
                                                               glm::floor(static_cast<float>(windowHeight) / 16) + 1 };
-            longLifetimeGlobalVars.clipperEmittedVerticesOffset = 12'500'000 - 4096,
+            longLifetimeGlobalVars.clipperEmittedVerticesOffset = maxVerticesCount - maxClipperEmittedTrianglesCount,
 
             pDevice->FreeBuffer(longLifetimeGlobalVarsBuffer);
             longLifetimeGlobalVarsBuffer = pDevice->CreateBuffer({

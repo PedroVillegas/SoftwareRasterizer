@@ -3,17 +3,17 @@
 
 struct PredEvalFn : StreamCompactionPredicateEvaluationFn
 {
-    typealias PRED_TYPE = float;
-    typealias BUFFER_ELEM_TYPE = GraphicsPipelineIntrinsicData;
+    typealias PRED_TYPE = uint;
+    typealias BUFFER_ELEM_TYPE = TriangleIndexed;
 
     bool EvaluatePredicate(const PRED_TYPE item)
     {
-        return item != float(CULLED_VERTEX);
+        return item != CULLED_VERTEX;
     }
 
     PRED_TYPE GetPredicateElement(BUFFER_ELEM_TYPE* src, const uint index)
     {
-        return src[index].position.x;
+        return src[index].i0;
     }
 }
 
@@ -25,13 +25,13 @@ GraphicsPipelinePushConstants PushConst;
 void main(uint id : SV_DispatchThreadID)
 {
     PredEvalFn pef;
-    StreamCompactionNonOrderPreserving<GraphicsPipelineIntrinsicData, PredEvalFn>(
+    StreamCompactionNonOrderPreserving<TriangleIndexed, PredEvalFn>(
             id,
-            PushConst.intrinsicDataBuffer,
-            PushConst.compactedIntrinsicDataBuffer,
+            PushConst.sparseTriangleBuffer,
+            PushConst.compactTriangleBuffer,
             uLongLifeGlobals.clipperEmittedVerticesOffset,
-            PushConst.metaDataBuffer[0].clipperEmittedVerticesCount,
-            PushConst.metaDataBuffer[0].compactedIntrinsicDataBufferSize,
+            PushConst.metadataBuffer[0].clipperEmittedTrianglesCount,
+            PushConst.metadataBuffer[0].compactTriangleBufferSize,
             pef
     );
 }

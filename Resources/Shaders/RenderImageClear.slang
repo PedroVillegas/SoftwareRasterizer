@@ -26,15 +26,15 @@ void main(uint2 id : SV_DispatchThreadID)
 
     renderTexture[id] = float4(1.0, 1.0, 1.0, 1.0);
 
-    if (id.x > 0 && (id.x & (uLongLifeGlobals.ultraCoarseRasterTileSize - 1)) == 0)
-    {
-        renderTexture[id] = float4(0.0, 0.0, 0.0, 1.0);
-    }
-
-    if (id.y > 0 && (id.y & (uLongLifeGlobals.ultraCoarseRasterTileSize - 1)) == 0)
-    {
-        renderTexture[id] = float4(0.0, 0.0, 0.0, 1.0);
-    }
+    //if (id.x > 0 && (id.x & (uLongLifeGlobals.ultraCoarseRasterTileSize - 1)) == 0)
+    //{
+    //    renderTexture[id] = float4(0.0, 0.0, 0.0, 1.0);
+    //}
+//
+    //if (id.y > 0 && (id.y & (uLongLifeGlobals.ultraCoarseRasterTileSize - 1)) == 0)
+    //{
+    //    renderTexture[id] = float4(0.0, 0.0, 0.0, 1.0);
+    //}
 
     RWTexture2D<float> depthTexture = uStorageTextures[PushConst.depthImgId];
     depthTexture[id] = 1.0;

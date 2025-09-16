@@ -29,14 +29,14 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
     const uint linearLocalThreadId = (localThreadId.y * WorkgroupSize().x) + localThreadId.x;
     if (linearLocalThreadId < MAX_DENSITY_BITMAP_BLOCK_COUNT)
     {
-        smemDensityBitmapBlocks[linearLocalThreadId] = PushConst.binningRasterizerBuffer[offsetToDensityBitmaps + linearLocalThreadId];
+        smemDensityBitmapBlocks[linearLocalThreadId] = PushConst.tileDataBuffer[offsetToDensityBitmaps + linearLocalThreadId];
     }
 
     GroupMemoryBarrierWithGroupSync();
 
     // if (all(mappedWorkgroupId == uint2(0, 0)) && linearLocalThreadId < 1)
     // {
-    //     printf("(Thread-%u) PrimitiveBitmapBlock = %u\n", linearLocalThreadId, PushConst.binningRasterizerBuffer[offsetToPrimitiveBitmaps + linearLocalThreadId]);
+    //     printf("(Thread-%u) PrimitiveBitmapBlock = %u\n", linearLocalThreadId, PushConst.tileDataBuffer[offsetToPrimitiveBitmaps + linearLocalThreadId]);
     // }
 
 #if 0
@@ -45,7 +45,8 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
         uint densityBitmapBlock = smemDensityBitmapBlocks[densityBitmapBlockIndex];
         uint i = countbits(densityBitmapBlock);
     }
-#elif
+#else
+    uint trianglesTested = 0;
     for (uint densityBitmapBlockIndex = 0; densityBitmapBlockIndex < MAX_DENSITY_BITMAP_BLOCK_COUNT; ++densityBitmapBlockIndex)
     {
         uint densityBitmapBlock = smemDensityBitmapBlocks[densityBitmapBlockIndex];
@@ -54,43 +55,55 @@ void main(uint3 globalThreadId : SV_DispatchThreadID,
         // Iterate over each bit of densityBitmapBlock
         for (uint densityBitmapBlockBit = 0; densityBitmapBlockBit < 32; ++densityBitmapBlockBit)
         {
+            // if (all(mappedWorkgroupId == uint2(0, 0)) && linearLocalThreadId < 1)
+            // {
+            //     printf("(Thread-%u) densityBitmapBlock = %u, densityBitmapBlockBit = %u\n", linearLocalThreadId, densityBitmapBlock, densityBitmapBlockBit);
+            // }
             const uint bit = 1 << densityBitmapBlockBit;
             if ((densityBitmapBlock & bit) == 0) continue;
 
             // Iterate over the corresponding 32 Primitive Bitmap blocks
             for (uint primitiveBitmapBlockIndex = 0; primitiveBitmapBlockIndex < 32; ++primitiveBitmapBlockIndex)
             {
-                uint primBitmap = PushConst.binningRasterizerBuffer[offsetToPrimitiveBitmaps + primitiveBitmapBlockIndex];
+                uint primBitmap = PushConst.tileDataBuffer[offsetToPrimitiveBitmaps + (densityBitmapBlockBit << 5) + primitiveBitmapBlockIndex];
                 // Iterate over each bit of primBitmap
-                uint primBitmapBitCount = countbits(primBitmap);
+                // uint primBitmapBitCount = countbits(primBitmap);
+                // if (all(mappedWorkgroupId == uint2(0, 0)) && linearLocalThreadId < 1 && densityBitmapBlockBit == 15)
+                // {
+                //     printf("(Thread-%u) densityBitmapBit = %u, primBitmap = %u\n", linearLocalThreadId, densityBitmapBlockBit, primBitmap);
+                // }
                 for (uint primitiveBitmapBlockBit = 0; primitiveBitmapBlockBit < 32; ++primitiveBitmapBlockBit)
                 {
                     const uint pbbBit = 1 << primitiveBitmapBlockBit;
                     if ((primBitmap & pbbBit) == 0) continue;
+                    trianglesTested++;
 
-                    const uint triangleId = (densityBitmapBlockIndex << 10) + (densityBitmapBlockBit << 5) + (primitiveBitmapBlockIndex << 5) + primitiveBitmapBlockBit;
-                    const uint firstVertex = 3 * triangleId;
+                    const uint triangleId = (densityBitmapBlockIndex << 15) + (densityBitmapBlockBit << 10) + (primitiveBitmapBlockIndex << 5) + primitiveBitmapBlockBit;
 
-                    int2 vtxPosRasterSpace_0 = PushConst.compactedIntrinsicDataBuffer[firstVertex].position.xy;
-                    int2 vtxPosRasterSpace_1 = PushConst.compactedIntrinsicDataBuffer[firstVertex + 1].position.xy;
-                    int2 vtxPosRasterSpace_2 = PushConst.compactedIntrinsicDataBuffer[firstVertex + 2].position.xy;
-
-                    // if (all(mappedWorkgroupId == uint2(0, 0)) && linearLocalThreadId < 1 && firstVertex == 848)
+                    // if (all(mappedWorkgroupId == uint2(0, 0)) && linearLocalThreadId < 1 && densityBitmapBlockBit == 15 && primitiveBitmapBlockIndex == 2 && primitiveBitmapBlockBit == 27)
                     // {
-                    //     printf("(Thread-%u)\nprimBitmapBitCount = %u\nfirstVertex = %u\ndensityBitmapBlockBit = %u\nprimBitmapBlockBit = %u\n",
-                    //     linearLocalThreadId, primBitmapBitCount, firstVertex, densityBitmapBlockBit, primitiveBitmapBlockBit);
+                    //     printf("(Thread-%u) densityBitmapBit = %u, primitiveBitmapBlockIndex = %u, primitiveBitmapBlockBit = %u\n", linearLocalThreadId, densityBitmapBlockBit, primitiveBitmapBlockIndex, primitiveBitmapBlockBit);
                     // }
 
+                    TriangleIndexed triangle = PushConst.compactTriangleBuffer[triangleId];
+
+                    int3 vtxPosRasterSpace_0 = PushConst.homogeneousPositionBuffer[triangle.i0].position.xyw;
+                    int2 vtxPosRasterSpace_1 = PushConst.homogeneousPositionBuffer[triangle.i1].position.xy;
+                    int2 vtxPosRasterSpace_2 = PushConst.homogeneousPositionBuffer[triangle.i2].position.xy;
+
+                    Triangle areatest = Triangle(vtxPosRasterSpace_0.xy, vtxPosRasterSpace_1, vtxPosRasterSpace_2);
+                    if (areatest.SignedArea() == 0) continue;
+
                     int2 sampleRasterSpace = globalThreadId.xy - halfFramebuffer;
-                    int firstEdgeTest = EdgeFn(vtxPosRasterSpace_0, vtxPosRasterSpace_1, sampleRasterSpace);
+                    int firstEdgeTest = EdgeFn(vtxPosRasterSpace_0.xy, vtxPosRasterSpace_1, sampleRasterSpace);
                     int secondEdgeTest = EdgeFn(vtxPosRasterSpace_1, vtxPosRasterSpace_2, sampleRasterSpace);
-                    int thirdEdgeTest = EdgeFn(vtxPosRasterSpace_2, vtxPosRasterSpace_0, sampleRasterSpace);
+                    int thirdEdgeTest = EdgeFn(vtxPosRasterSpace_2, vtxPosRasterSpace_0.xy, sampleRasterSpace);
 
                     if ( (firstEdgeTest >= 0 && secondEdgeTest >= 0 && thirdEdgeTest >= 0)
                       || (firstEdgeTest < 0 && secondEdgeTest < 0 && thirdEdgeTest < 0)
                     )
                     {
-                        renderTexture[globalThreadId.xy] = float4(FillPixel(PushConst.compactedIntrinsicDataBuffer[firstVertex].position.w), 1.0);
+                        renderTexture[globalThreadId.xy] = float4(FillPixel(vtxPosRasterSpace_0.z), 1.0);
                     }
 
                     // if (all(mappedWorkgroupId == uint2(0, 0)))

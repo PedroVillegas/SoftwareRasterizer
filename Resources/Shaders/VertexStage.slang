@@ -1,6 +1,6 @@
-struct GraphicsPipelineIntrinsicData
+struct HomogeneousPosition
 {
-    float4 homogeneousPosition;
+    float4 position;
 };
 
 struct Vertex
@@ -12,10 +12,10 @@ struct Vertex
 struct PC
 {
     float4x4 mvp;
-    GraphicsPipelineIntrinsicData* intrinsicDataBuffer;
+    HomogeneousPosition* homogeneousPositionBuffer;
     Vertex* vertexBuffer;
     uint* indexBuffer;
-    uint indexCount;
+    uint vertexCount;
 };
 
 [[vk::push_constant]]
@@ -25,9 +25,9 @@ PC PushConst;
 [numthreads(256, 1, 1)]
 void main(uint id : SV_DispatchThreadID)
 {
-    if (id >= PushConst.indexCount) return;
+    if (id >= PushConst.vertexCount) return;
 
-    Vertex v = PushConst.vertexBuffer[PushConst.indexBuffer[id]];
+    Vertex v = PushConst.vertexBuffer[id];
 
-    PushConst.intrinsicDataBuffer[id].homogeneousPosition = mul(PushConst.mvp, float4(v.position, 1.0));
+    PushConst.homogeneousPositionBuffer[id].position = mul(PushConst.mvp, float4(v.position, 1.0));
 }
